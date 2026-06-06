@@ -9,7 +9,7 @@ services:
       dockerfile: Dockerfile
     container_name: osint-crm-frontend
     ports:
-      - "8080:80"
+      - "8084:80"
     restart: unless-stopped
     depends_on:
       backend:
