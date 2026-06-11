@@ -562,7 +562,7 @@ initializeDatabase().then(() => {
 app.set('trust proxy', 1);
 
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: process.env.FRONTEND_URL || 'https://soc-osint.skylinelogic.net',
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -582,7 +582,7 @@ app.use(session({
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
-    sameSite: 'strict',
+    sameSite: 'lax',
     maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
   }
 }));
