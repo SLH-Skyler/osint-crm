@@ -1,14 +1,21 @@
 // File: frontend/src/App.js
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { BrowserRouter, useNavigate, useLocation } from 'react-router-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'reactflow/dist/style.css';
-import { Home, Users, Wrench, Network, Settings, Shield, Map, Folder, Search, Building2, Wifi, LogOut } from 'lucide-react';
+import { Home, Users, Wrench, Network, Settings, Shield, Map, Folder, Search, Building2, Wifi, LogOut, Landmark, Package, Receipt, Menu, X, Wallet } from 'lucide-react';
 
+import { peopleAPI, businessAPI } from './utils/api';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DataProvider, useData } from './contexts/DataContext';
 import { UIProvider, useUI } from './contexts/UIContext';
+import { ThemeProvider, useTheme } from './contexts/ThemeContext';
+import { ProjectProvider, useProject } from './contexts/ProjectContext';
+import { changeLanguage } from './i18n';
 
+import UpdateBanner from './components/UpdateBanner';
 import Dashboard from './components/Dashboard';
 import CaseManagement from './components/CaseManagement';
 import PeopleList from './components/PeopleList';
@@ -23,8 +30,24 @@ import AdvancedSearch from './components/AdvancedSearch';
 import BusinessList from './components/BusinessList';
 import AddEditBusinessForm from './components/AddEditBusinessForm';
 import DarkModeToggle from './components/DarkModeToggle';
+import ProjectSelector from './components/ProjectSelector';
+import ProjectGate from './components/ProjectGate';
 import SystemHealth from './components/SystemHealth';
 import WirelessNetworks from './components/WirelessNetworks';
+import PropertyList from './components/PropertyList';
+import AddEditPropertyForm from './components/AddEditPropertyForm';
+import PropertyDetailModal from './components/PropertyDetailModal';
+import AssetsList from './components/AssetsList';
+import AddEditAssetForm from './components/AddEditAssetForm';
+import AssetDetailModal from './components/AssetDetailModal';
+import CryptoWalletsList from './components/CryptoWalletsList';
+import AddEditCryptoWalletForm from './components/AddEditCryptoWalletForm';
+import CryptoWalletDetailModal from './components/CryptoWalletDetailModal';
+import TransactionsList from './components/TransactionsList';
+import AddEditTransactionForm from './components/AddEditTransactionForm';
+import TransactionDetailModal from './components/TransactionDetailModal';
+import BusinessDetailModal from './components/BusinessDetailModal';
+import ErrorBoundary from './components/ErrorBoundary';
 import Login from './components/Login';
 
 // Fix default Leaflet marker icons
@@ -35,55 +58,149 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-const navigationItems = [
-  { id: 'dashboard',     label: 'Dashboard',         icon: Home },
-  { id: 'cases',         label: 'Cases',              icon: Folder },
-  { id: 'people',        label: 'People',             icon: Users },
-  { id: 'businesses',    label: 'Businesses',         icon: Building2 },
-  { id: 'tools',         label: 'OSINT Tools',        icon: Wrench },
-  { id: 'relationships', label: 'Entity Network',     icon: Network },
-  { id: 'map',           label: 'Locations',          icon: Map },
-  { id: 'wireless',      label: 'Wireless Networks',  icon: Wifi },
-  { id: 'settings',      label: 'Settings',           icon: Settings },
+const navigationItemIds = [
+  { id: 'dashboard',     icon: Home },
+  { id: 'cases',         icon: Folder },
+  { id: 'people',        icon: Users },
+  { id: 'businesses',    icon: Building2 },
+  { id: 'properties',    icon: Landmark },
+  { id: 'assets',        icon: Package },
+  { id: 'crypto-wallets', icon: Wallet },
+  { id: 'transactions',  icon: Receipt },
+  { id: 'tools',         icon: Wrench },
+  { id: 'relationships', icon: Network },
+  { id: 'map',           icon: Map },
+  { id: 'wireless',      icon: Wifi },
+  { id: 'settings',      icon: Settings },
 ];
 
 // ── Inner component (has access to all context hooks) ───────────────────────
 
 const AppShell = () => {
+  const { t, i18n } = useTranslation();
   const { authenticated, currentUser, authLoading, handleLogin, handleLogout } = useAuth();
-  const { refreshAll, appSettings } = useData();
+  const { refreshAll, appSettings, fetchBusinesses, fetchTools } = useData();
+  const { refetchProjects } = useProject();
   const {
     activeSection, setActiveSection,
     selectedPersonForDetail, setSelectedPersonForDetail,
-    editingPerson, setEditingPerson,
-    showAddPersonForm, setShowAddPersonForm,
+    editingPerson,
+    showAddPersonForm,
     editingTool, setEditingTool,
     showAddToolForm, setShowAddToolForm,
     editingBusiness, setEditingBusiness,
     showAddBusinessForm, setShowAddBusinessForm,
+    selectedPropertyForDetail, setSelectedPropertyForDetail,
+    editingProperty, setEditingProperty,
+    showAddPropertyForm, setShowAddPropertyForm,
+    selectedAssetForDetail, setSelectedAssetForDetail,
+    editingAsset, setEditingAsset,
+    showAddAssetForm, setShowAddAssetForm,
+    selectedCryptoWalletForDetail, setSelectedCryptoWalletForDetail,
+    editingCryptoWallet, setEditingCryptoWallet,
+    showAddCryptoWalletForm, setShowAddCryptoWalletForm,
+    selectedTransactionForDetail, setSelectedTransactionForDetail,
+    editingTransaction, setEditingTransaction,
+    showAddTransactionForm, setShowAddTransactionForm,
+    selectedBusinessForDetail, setSelectedBusinessForDetail,
     showAdvancedSearch, setShowAdvancedSearch,
   } = useUI();
 
-  const [darkMode, setDarkMode] = React.useState(() => {
-    const saved = localStorage.getItem('darkMode');
-    return saved ? JSON.parse(saved) : false;
-  });
+  // ── Global-default / per-user-override reconciliation (issue #91) ─────────
+  // localStorage (read synchronously by i18n.js / ThemeContext on first
+  // paint, to avoid a flash) is only a cache. The source of truth is: this
+  // user's own override (currentUser.language / .theme_mode, set in
+  // General/Appearance) if they have one, else the admin's global default
+  // (appSettings.defaultLanguage / .defaultThemeMode), else the hardcoded
+  // fallback. Reconcile once both pieces are known, so a second device (no
+  // local cache yet) or an admin's changed default picks up the right value
+  // without the user having to touch anything.
+  const { setThemeMode } = useTheme();
+  useEffect(() => {
+    if (!currentUser) return;
+    const effectiveLanguage = currentUser.language || appSettings.defaultLanguage;
+    if (effectiveLanguage && effectiveLanguage !== i18n.language) {
+      changeLanguage(effectiveLanguage);
+    }
+    const effectiveThemeMode = currentUser.theme_mode || appSettings.defaultThemeMode;
+    if (effectiveThemeMode) {
+      setThemeMode(effectiveThemeMode);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser, appSettings.defaultLanguage, appSettings.defaultThemeMode]);
+
+  const navigationItems = useMemo(() => navigationItemIds.map(item => ({
+    ...item,
+    label: t(`app.nav.${item.id}`),
+  })), [t]);
+
+  // ── URL ↔ section sync (issue #52) ────────────────────────────────────────
+  // The URL is the source of truth for which section is shown, so browser
+  // back/forward and deep links work. activeSection stays in UIContext because
+  // many components read/set it; the two effects below keep them consistent.
+  // Mobile nav drawer. Desktop (md+) ignores this entirely: the sidebar is
+  // statically positioned there, so this only governs the off-canvas panel.
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  const navigate = useNavigate();
+  const location = useLocation();
+  const lastDeepLink = useRef(null);
+  const urlSection = useRef(null); // last section applied FROM the URL
+  const urlSynced = useRef(false); // state has caught up with the initial URL
+
+  // URL → state (also handles back/forward and initial deep links)
+  useEffect(() => {
+    const [, seg, id] = location.pathname.split('/');
+    const section = navigationItemIds.some(item => item.id === seg) ? seg : 'dashboard';
+    urlSection.current = section;
+    setActiveSection(section);
+    setMobileNavOpen(false);
+
+    // Deep links: /people/:id and /businesses/:id open the detail modal
+    const deepLink = id && /^\d+$/.test(id) ? `${seg}/${id}` : null;
+    if (deepLink && deepLink !== lastDeepLink.current && authenticated) {
+      lastDeepLink.current = deepLink;
+      if (seg === 'people') {
+        peopleAPI.getById(Number(id)).then(setSelectedPersonForDetail).catch(() => {});
+      } else if (seg === 'businesses') {
+        businessAPI.getById(Number(id)).then(setSelectedBusinessForDetail).catch(() => {});
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, authenticated]);
+
+  // state → URL (covers setActiveSection calls from any component). Must not
+  // fire before state has absorbed the initial URL, or a deep link like
+  // /people/5 would be clobbered back to /dashboard on mount.
+  useEffect(() => {
+    if (!urlSynced.current) {
+      if (activeSection === urlSection.current) urlSynced.current = true;
+      return;
+    }
+    if (activeSection !== urlSection.current) {
+      urlSection.current = activeSection;
+      navigate(`/${activeSection}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection]);
 
   // Fetch all data once authenticated
   useEffect(() => {
-    if (authenticated) refreshAll();
-  }, [authenticated, refreshAll]);
+    if (authenticated) { refreshAll(); refetchProjects(); }
+  }, [authenticated, refreshAll, refetchProjects]);
 
-  // Persist dark mode preference and apply CSS class
+  // Escape closes the mobile drawer
   useEffect(() => {
-    localStorage.setItem('darkMode', JSON.stringify(darkMode));
-    document.documentElement.classList.toggle('dark', darkMode);
-  }, [darkMode]);
+    if (!mobileNavOpen) return undefined;
+    const onKeyDown = (e) => { if (e.key === 'Escape') setMobileNavOpen(false); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [mobileNavOpen]);
 
   if (authLoading) {
     return (
       <div className="flex items-center justify-center min-h-[100dvh] bg-slate-50 dark:bg-slate-900">
-        <div className="text-gray-600 dark:text-gray-400">Loading...</div>
+        <div className="text-slate-600 dark:text-slate-400">{t('common.loading')}</div>
       </div>
     );
   }
@@ -93,97 +210,155 @@ const AppShell = () => {
   }
 
   return (
-    <div className="flex min-h-[100dvh] bg-gradient-to-br from-indigo-50 via-white to-cyan-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 relative overflow-hidden transition-colors duration-150">
-      {/* Background decoration */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-1/2 -right-1/2 w-full h-full bg-gradient-cosmic opacity-20 dark:opacity-10 rounded-full blur-3xl"></div>
-        <div className="absolute -bottom-1/2 -left-1/2 w-full h-full bg-gradient-ocean opacity-15 dark:opacity-8 rounded-full blur-3xl"></div>
+    <ProjectGate>
+    <div className="flex min-h-[100dvh] bg-slate-100 dark:bg-slate-950 relative overflow-hidden transition-colors duration-150">
+
+      {/* Mobile top bar — the only chrome visible below md, since the sidebar
+          is off-canvas there. */}
+      <div className="md:hidden fixed top-0 inset-x-0 z-30 h-14 flex items-center gap-3 px-4 glass-card rounded-none border-x-0 border-t-0">
+        <button
+          onClick={() => setMobileNavOpen(true)}
+          className="p-2 -ml-2 rounded-[var(--radius-control)] text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+          aria-label={t('app.openNavigation')}
+          aria-expanded={mobileNavOpen}
+        >
+          <Menu style={{ width: 22, height: 22 }} />
+        </button>
+        <span className="font-semibold text-slate-900 dark:text-slate-100 truncate">
+          {appSettings.appName}
+        </span>
+        <div className="ml-auto">
+          <ProjectSelector compact />
+        </div>
       </div>
 
-      {/* Sidebar */}
-      <div className="relative w-72 lg:w-72 md:w-64 sm:w-56 glass-card m-4 rounded-glass-lg backdrop-blur-xl border border-white/30 shadow-glass-lg flex-shrink-0">
-        <div className="p-6 border-b border-white/20">
+      {/* Scrim — closes the drawer on tap. Below md only. */}
+      {mobileNavOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-40 bg-slate-900/50"
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Sidebar. Below md it's an off-canvas drawer; at md+ it's the static
+          column it has always been. The widths used to be written
+          desktop-first (`w-72 lg:w-72 md:w-64 sm:w-56`), which in Tailwind's
+          mobile-first system meant the sidebar was at its WIDEST on the
+          narrowest screen — 288px of nav on a 375px phone (issue #64). */}
+      <div
+        className={`fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] rounded-none border-y-0 border-l-0
+          flex flex-col glass-card flex-shrink-0
+          transform transition-transform duration-200 ease-out
+          ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}
+          md:static md:translate-x-0 md:max-w-none md:m-4 md:w-64 lg:w-72
+          md:rounded-[var(--radius-card)] md:border`}
+      >
+        <div className="p-5 border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-3 min-w-0">
               {appSettings.appLogo ? (
-                <img src={appSettings.appLogo} alt="Logo" className="h-12 w-12 object-contain rounded-xl shadow-glow-sm" />
+                <img src={appSettings.appLogo} alt={t('app.logoAlt')} className="h-10 w-10 object-contain rounded-lg" />
               ) : (
-                <div className="p-2 rounded-xl bg-gradient-primary shadow-glow-sm">
-                  <Shield className="w-8 h-8 text-white" />
+                <div className="p-2 rounded-lg bg-accent-primary">
+                  <Shield className="w-6 h-6 text-white" />
                 </div>
               )}
               <div>
-                <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">{appSettings.appName}</h2>
-                <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">OSINT Investigation Suite</p>
+                <h2 className="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 leading-tight break-words">{appSettings.appName}</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">{t('app.suiteSubtitle')}</p>
               </div>
             </div>
-            <DarkModeToggle darkMode={darkMode} setDarkMode={setDarkMode} />
+            <div className="flex items-center gap-1">
+              <DarkModeToggle />
+              <button
+                onClick={() => setMobileNavOpen(false)}
+                className="md:hidden p-2 rounded-[var(--radius-control)] text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                aria-label={t('app.closeNavigation')}
+              >
+                <X style={{ width: 18, height: 18 }} />
+              </button>
+            </div>
+          </div>
+          <div className="mt-3">
+            <ProjectSelector />
           </div>
         </div>
 
-        <nav className="p-4 space-y-2">
+        <nav className="p-3 space-y-0.5 flex-1 overflow-y-auto">
+          <p className="px-3 pt-1 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-500">
+            {t('app.workspace')}
+          </p>
           {navigationItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeSection === item.id;
             return (
               <button
                 key={item.id}
-                onClick={() => setActiveSection(item.id)}
-                className={`w-full text-left p-4 rounded-glass transition-[background-color,box-shadow] duration-150 flex items-center space-x-3 group relative overflow-hidden active:scale-[0.97] ${
+                onClick={() => { setActiveSection(item.id); setMobileNavOpen(false); }}
+                className={`nav-item ${
                   isActive
-                    ? 'bg-gradient-primary text-white shadow-glow-md'
-                    : 'glass-button text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100'
+                    ? 'bg-accent-primary/10 text-accent-primary'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
-                {isActive && <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-50"></div>}
-                <Icon className={`w-5 h-5 transition-colors duration-150 ${isActive ? 'text-white' : 'text-slate-600 dark:text-slate-400 group-hover:text-accent-primary'}`} />
-                <span className="font-medium relative z-10">{item.label}</span>
-                {isActive && <div className="absolute right-2 w-2 h-2 bg-white rounded-full animate-pulse-soft"></div>}
+                <Icon className={`flex-shrink-0 transition-colors duration-150 ${isActive ? 'text-accent-primary' : 'text-slate-500 dark:text-slate-400'}`} style={{ width: 18, height: 18 }} />
+                <span>{item.label}</span>
               </button>
             );
           })}
 
-          <button
-            onClick={handleLogout}
-            className="w-full text-left p-4 rounded-glass transition-[background-color,box-shadow] duration-150 flex items-center space-x-3 group relative overflow-hidden glass-button text-slate-700 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 active:scale-[0.97] mt-4 border-t border-white/20 pt-4"
-          >
-            <LogOut className="w-5 h-5 transition-colors duration-150" />
-            <span className="font-medium relative z-10">Logout</span>
-            <span className="text-xs text-gray-500 dark:text-gray-400 ml-auto">{currentUser?.username}</span>
-          </button>
+          <div className="pt-3 mt-3 border-t border-slate-200 dark:border-slate-800">
+            <button
+              onClick={handleLogout}
+              className="nav-item text-slate-600 dark:text-slate-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400"
+            >
+              <LogOut className="flex-shrink-0" style={{ width: 18, height: 18 }} />
+              <span>{t('app.logout')}</span>
+              <span className="text-xs text-slate-400 dark:text-slate-500 ml-auto">{currentUser?.username}</span>
+            </button>
+          </div>
         </nav>
 
-        <div className="p-4 border-t border-white/20">
+        <div className="p-3 border-t border-slate-200 dark:border-slate-800">
           <button
-            onClick={() => setShowAdvancedSearch(true)}
-            className="w-full p-4 glass-heavy text-slate-700 rounded-glass hover:shadow-glow-sm transition-[box-shadow] duration-150 flex items-center justify-center space-x-2 group active:scale-[0.97]"
+            onClick={() => { setShowAdvancedSearch(true); setMobileNavOpen(false); }}
+            className="btn btn-secondary w-full"
           >
-            <Search className="w-5 h-5 text-accent-primary group-hover:animate-pulse" />
-            <span className="font-medium">Advanced Search</span>
+            <Search className="w-4 h-4 text-accent-primary" />
+            <span>{t('searchFilters.advancedSearch')}</span>
           </button>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 relative flex flex-col m-4">
-        <div className="flex-1 glass-card backdrop-blur-xl border border-white/20 shadow-glass-lg rounded-glass-lg overflow-hidden">
-          <div className="h-full p-6 overflow-auto">
+      <div className="flex-1 min-w-0 relative flex flex-col m-4 mt-[4.5rem] md:mt-4 md:ml-0">
+        <div className="flex-1 glass-card overflow-hidden flex flex-col">
+          <UpdateBanner />
+          {/* flex-1 min-h-0 rather than h-full: the banner shares this column,
+              so a fixed full height would push the content past the card. */}
+          <div className="flex-1 min-h-0 p-4 md:p-6 overflow-auto">
             <div className="max-w-full mx-auto h-full">
+              <ErrorBoundary resetKey={activeSection}>
 
               {activeSection === 'dashboard'     && <Dashboard />}
               {activeSection === 'cases'         && <CaseManagement />}
               {activeSection === 'people'        && <PeopleList />}
               {activeSection === 'tools'         && <ToolsList />}
               {activeSection === 'businesses'    && <BusinessList />}
+              {activeSection === 'properties'    && <PropertyList />}
+              {activeSection === 'assets'        && <AssetsList />}
+              {activeSection === 'crypto-wallets' && <CryptoWalletsList />}
+              {activeSection === 'transactions'  && <TransactionsList />}
               {activeSection === 'map'           && <div className="h-full"><GlobalMap /></div>}
               {activeSection === 'wireless'      && <div className="h-full"><WirelessNetworks /></div>}
               {activeSection === 'settings'      && <SettingsPage />}
 
               {activeSection === 'relationships' && (
                 <div className="h-full flex flex-col overflow-hidden">
-                  <div className="glass border-b border-white/20 px-6 py-4 flex-shrink-0">
-                    <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 dark:from-gray-100 dark:to-gray-300 bg-clip-text text-transparent">Entity Relationship Network</h1>
-                    <p className="text-gray-600 dark:text-gray-400 mt-1">Visualize connections between people and businesses</p>
+                  <div className="border-b border-slate-200 dark:border-slate-700 px-6 py-4 flex-shrink-0">
+                    <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{t('app.entityNetworkTitle')}</h1>
+                    <p className="text-slate-600 dark:text-slate-400 mt-1">{t('app.entityNetworkSubtitle')}</p>
                   </div>
                   <div className="flex-1 min-h-0 relative">
                     <div className="absolute inset-0 overflow-hidden">
@@ -193,6 +368,7 @@ const AppShell = () => {
                 </div>
               )}
 
+              </ErrorBoundary>
             </div>
           </div>
         </div>
@@ -202,10 +378,32 @@ const AppShell = () => {
       {showAddPersonForm  && <AddEditPersonForm />}
       {editingPerson      && <AddEditPersonForm />}
       {selectedPersonForDetail && <PersonDetailModal />}
-      {showAddToolForm    && <AddEditToolForm tool={null} onSave={() => { setShowAddToolForm(false); }} onCancel={() => setShowAddToolForm(false)} />}
-      {editingTool        && <AddEditToolForm tool={editingTool} onSave={() => { setEditingTool(null); }} onCancel={() => setEditingTool(null)} />}
-      {showAddBusinessForm && <AddEditBusinessForm business={null} onSave={() => { setShowAddBusinessForm(false); }} onCancel={() => setShowAddBusinessForm(false)} />}
-      {editingBusiness    && <AddEditBusinessForm business={editingBusiness} onSave={() => { setEditingBusiness(null); }} onCancel={() => setEditingBusiness(null)} />}
+      {showAddToolForm    && <AddEditToolForm tool={null} onSave={() => { setShowAddToolForm(false); fetchTools(); }} onCancel={() => setShowAddToolForm(false)} />}
+      {editingTool        && <AddEditToolForm tool={editingTool} onSave={() => { setEditingTool(null); fetchTools(); }} onCancel={() => setEditingTool(null)} />}
+      {showAddBusinessForm && <AddEditBusinessForm business={null} onSave={() => { setShowAddBusinessForm(false); fetchBusinesses(); }} onCancel={() => setShowAddBusinessForm(false)} />}
+      {editingBusiness    && <AddEditBusinessForm business={editingBusiness} onSave={() => { setEditingBusiness(null); fetchBusinesses(); }} onCancel={() => setEditingBusiness(null)} />}
+
+      {/* Property modals */}
+      {showAddPropertyForm && <AddEditPropertyForm property={null} onClose={() => setShowAddPropertyForm(false)} />}
+      {editingProperty     && <AddEditPropertyForm property={editingProperty} onClose={() => setEditingProperty(null)} />}
+      {selectedPropertyForDetail && <PropertyDetailModal property={selectedPropertyForDetail} onClose={() => setSelectedPropertyForDetail(null)} />}
+
+      {/* Asset modals */}
+      {showAddAssetForm && <AddEditAssetForm asset={null} onClose={() => setShowAddAssetForm(false)} />}
+      {editingAsset     && <AddEditAssetForm asset={editingAsset} onClose={() => setEditingAsset(null)} />}
+      {selectedAssetForDetail && <AssetDetailModal asset={selectedAssetForDetail} onClose={() => setSelectedAssetForDetail(null)} />}
+
+      {showAddCryptoWalletForm && <AddEditCryptoWalletForm wallet={null} onClose={() => setShowAddCryptoWalletForm(false)} />}
+      {editingCryptoWallet     && <AddEditCryptoWalletForm wallet={editingCryptoWallet} onClose={() => setEditingCryptoWallet(null)} />}
+      {selectedCryptoWalletForDetail && <CryptoWalletDetailModal wallet={selectedCryptoWalletForDetail} onClose={() => setSelectedCryptoWalletForDetail(null)} />}
+
+      {/* Transaction modals */}
+      {showAddTransactionForm && <AddEditTransactionForm transaction={null} onClose={() => setShowAddTransactionForm(false)} />}
+      {editingTransaction     && <AddEditTransactionForm transaction={editingTransaction} onClose={() => setEditingTransaction(null)} />}
+      {selectedTransactionForDetail && <TransactionDetailModal transaction={selectedTransactionForDetail} onClose={() => setSelectedTransactionForDetail(null)} />}
+
+      {/* Business detail (venue activity / ledger) */}
+      {selectedBusinessForDetail && <BusinessDetailModal business={selectedBusinessForDetail} onClose={() => setSelectedBusinessForDetail(null)} />}
       {showAdvancedSearch && (
         <AdvancedSearch
           onSelectPerson={(person) => { setSelectedPersonForDetail(person); setShowAdvancedSearch(false); }}
@@ -213,21 +411,32 @@ const AppShell = () => {
         />
       )}
 
-      <SystemHealth />
+      {/* Admin-only ops widget — the health endpoint is requireAdmin, and
+          rendering it for regular users produced a false "System Offline"
+          from the resulting 403s (issue #58). The component also hides
+          itself on 403 in case the role is stale. */}
+      {currentUser?.role === 'admin' && <SystemHealth />}
     </div>
+    </ProjectGate>
   );
 };
 
 // ── Root: wrap providers around the shell ────────────────────────────────────
 
 const App = () => (
-  <AuthProvider>
-    <DataProvider>
-      <UIProvider>
-        <AppShell />
-      </UIProvider>
-    </DataProvider>
-  </AuthProvider>
+  <ThemeProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <ProjectProvider>
+          <DataProvider>
+            <UIProvider>
+              <AppShell />
+            </UIProvider>
+          </DataProvider>
+        </ProjectProvider>
+      </AuthProvider>
+    </BrowserRouter>
+  </ThemeProvider>
 );
 
 export default App;

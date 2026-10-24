@@ -1,5 +1,6 @@
 // File: frontend/src/components/WirelessNetworkDetail.js
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, Wifi, Bluetooth, Radio, Trash2 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
@@ -25,6 +26,7 @@ const getNetworkTypeIcon = (type) => {
 };
 
 const WirelessNetworkDetail = ({ network, onClose, onUpdate, onDelete, people = [] }) => {
+  const { t } = useTranslation();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -35,48 +37,48 @@ const WirelessNetworkDetail = ({ network, onClose, onUpdate, onDelete, people = 
       await wirelessNetworksAPI.update(network.id, data);
       onUpdate?.();
     } catch (err) {
-      setError(err.message || 'Failed to update network');
+      setError(err.message || t('wirelessNetworkDetail.errorUpdateNetwork'));
     } finally {
       setSaving(false);
     }
   };
 
   const handleSaveAssociation = async (data) => {
-    if (!data.person_id) { setError('Please select a person'); return; }
+    if (!data.person_id) { setError(t('wirelessNetworkDetail.errorSelectPerson')); return; }
     setSaving(true);
     setError(null);
     try {
       await wirelessNetworksAPI.associate(network.id, data.person_id, data.association_note, data.association_confidence);
       onUpdate?.();
     } catch (err) {
-      setError(err.message || 'Failed to associate network');
+      setError(err.message || t('wirelessNetworkDetail.errorAssociateNetwork'));
     } finally {
       setSaving(false);
     }
   };
 
   const handleRemoveAssociation = async () => {
-    if (!window.confirm('Remove person association from this network?')) return;
+    if (!window.confirm(t('wirelessNetworkDetail.confirmRemoveAssociation'))) return;
     setSaving(true);
     setError(null);
     try {
       await wirelessNetworksAPI.removeAssociation(network.id);
       onUpdate?.();
     } catch (err) {
-      setError(err.message || 'Failed to remove association');
+      setError(err.message || t('wirelessNetworkDetail.errorRemoveAssociation'));
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!window.confirm(`Delete network "${network.ssid}"?`)) return;
+    if (!window.confirm(t('wirelessNetworkDetail.confirmDeleteNetwork', { ssid: network.ssid }))) return;
     try {
       await wirelessNetworksAPI.delete(network.id);
       onDelete?.();
       onClose();
     } catch (err) {
-      setError(err.message || 'Failed to delete network');
+      setError(err.message || t('wirelessNetworks.errorDeleteNetwork'));
     }
   };
 
@@ -108,30 +110,33 @@ const WirelessNetworkDetail = ({ network, onClose, onUpdate, onDelete, people = 
         <div className="p-6 space-y-6">
           <NetworkInfoSection network={network} saving={saving} onSave={handleSaveNetwork} />
 
-          {/* Map preview */}
-          <div className="pt-6 border-t border-gray-200 dark:border-gray-700">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Location Preview</h3>
-            <div className="h-64 rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
-              <MapContainer center={[network.latitude, network.longitude]} zoom={16} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false}>
-                <TileLayer attribution={OSM_ATTRIBUTION} url={OSM_TILE_URL} />
-                <Marker position={[network.latitude, network.longitude]}>
-                  <Popup>
-                    <div className="p-2">
-                      <p className="font-semibold text-sm">{network.ssid}</p>
-                      <p className="text-xs text-gray-600 dark:text-gray-400">{network.bssid}</p>
-                      <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
-                        {network.latitude.toFixed(6)}, {network.longitude.toFixed(6)}
-                      </p>
-                    </div>
-                  </Popup>
-                </Marker>
-              </MapContainer>
+          {/* Map preview — only when the network has coordinates (they're
+              optional on creation; dereferencing null here crashed the view) */}
+          {network.latitude != null && network.longitude != null && (
+            <div className="pt-6 border-t border-gray-200 dark:border-gray-700">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">{t('wirelessNetworkDetail.locationPreview')}</h3>
+              <div className="h-64 rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+                <MapContainer center={[network.latitude, network.longitude]} zoom={16} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false}>
+                  <TileLayer attribution={OSM_ATTRIBUTION} url={OSM_TILE_URL} />
+                  <Marker position={[network.latitude, network.longitude]}>
+                    <Popup>
+                      <div className="p-2">
+                        <p className="font-semibold text-sm">{network.ssid}</p>
+                        <p className="text-xs text-gray-600 dark:text-gray-400">{network.bssid}</p>
+                        <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
+                          {network.latitude.toFixed(6)}, {network.longitude.toFixed(6)}
+                        </p>
+                      </div>
+                    </Popup>
+                  </Marker>
+                </MapContainer>
+              </div>
+              <p className="text-xs text-gray-600 dark:text-gray-400 mt-2">
+                {t('wirelessNetworkDetail.coordinatesLabel', { lat: network.latitude.toFixed(6), lon: network.longitude.toFixed(6) })}
+                {network.accuracy && <span>{t('wirelessNetworkDetail.accuracySuffix', { value: network.accuracy })}</span>}
+              </p>
             </div>
-            <p className="text-xs text-gray-600 dark:text-gray-400 mt-2">
-              Coordinates: {network.latitude.toFixed(6)}, {network.longitude.toFixed(6)}
-              {network.accuracy && <span> • Accuracy: ±{network.accuracy}m</span>}
-            </p>
-          </div>
+          )}
 
           <NetworkAssociation
             network={network}
@@ -145,10 +150,10 @@ const WirelessNetworkDetail = ({ network, onClose, onUpdate, onDelete, people = 
         {/* Footer */}
         <div className="flex items-center justify-between p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-slate-900/50">
           <button onClick={handleDelete} className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors">
-            <Trash2 className="w-4 h-4" /><span>Delete Network</span>
+            <Trash2 className="w-4 h-4" /><span>{t('wirelessNetworkDetail.deleteNetwork')}</span>
           </button>
           <button onClick={onClose} className="px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-all">
-            Close
+            {t('common.close')}
           </button>
         </div>
       </div>

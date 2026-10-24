@@ -1,25 +1,47 @@
 // File: frontend/src/components/PersonDetailModal.js
 import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
-import { User, Edit2, X, Database, Mail, Phone, Globe, MapPin, Hash, Link, Calendar, Briefcase, Tag, Network, FileText, Trash2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { User, Edit2, X, Database, Mail, Phone, Globe, MapPin, Hash, Link, Briefcase, Tag, Network, FileText, Trash2 } from 'lucide-react';
 import RelationshipManager from './visualization/RelationshipManager';
 import ReportGenerator from './ReportGenerator';
 import TravelPatternAnalysis from './TravelPatternAnalysis';
+import TransactionTable from './TransactionTable';
+import EntityLedger from './EntityLedger';
+import { transactionsAPI, assetsAPI } from '../utils/api';
 import { useData } from '../contexts/DataContext';
 import { useUI } from '../contexts/UIContext';
+import { useProject } from '../contexts/ProjectContext';
+import { formatPersonName } from '../utils/personName';
 
 const PersonDetailModal = () => {
+  const { t } = useTranslation();
   const { people, customFields } = useData();
-  const { selectedPersonForDetail: person, setSelectedPersonForDetail, setEditingPerson } = useUI();
+  const { selectedPersonForDetail, setSelectedPersonForDetail, setEditingPerson } = useUI();
+  const { activeProjectId, projects } = useProject();
+  // Resolve full record (callers may pass a partial { id }). If the record
+  // isn't in the (project-scoped) `people` list, it fell through to the raw
+  // fetch from a deep link -- e.g. /people/:id for a person in a different
+  // project than the one currently active.
+  const person = (selectedPersonForDetail && people.find(p => p.id === selectedPersonForDetail.id)) || selectedPersonForDetail;
+  const isOtherProject = person && activeProjectId && person.project_id != null && person.project_id !== activeProjectId;
+  const otherProjectName = isOtherProject && projects.find(p => p.id === person.project_id)?.name;
 
   const onClose = () => setSelectedPersonForDetail(null);
   const onEdit = (p) => { setSelectedPersonForDetail(null); setEditingPerson(p); };
   const [activeTab, setActiveTab] = useState('details');
   const [showReportGenerator, setShowReportGenerator] = useState(false);
   const [locations, setLocations] = useState(person.locations || []);
+  const [personTransactions, setPersonTransactions] = useState([]);
+  const [personAssets, setPersonAssets] = useState([]);
+
+  useEffect(() => {
+    if (!person?.id) return;
+    transactionsAPI.getByPerson(person.id).then(r => setPersonTransactions(r.data || [])).catch(err => console.error('Error loading person transactions:', err));
+    assetsAPI.getByPerson(person.id).then(r => setPersonAssets(r.data || [])).catch(err => console.error('Error loading person assets:', err));
+  }, [person?.id]);
 
   const handleDeleteLocation = async (index) => {
-    if (!window.confirm('Remove this location?')) return;
+    if (!window.confirm(t('personDetailModal.confirmRemoveLocation'))) return;
     try {
       const res = await fetch(`/api/people/${person.id}/locations/${index}`, {
         method: 'DELETE',
@@ -28,17 +50,15 @@ const PersonDetailModal = () => {
       if (res.ok) {
         setLocations(prev => prev.filter((_, i) => i !== index));
       } else {
-        alert('Failed to delete location');
+        alert(t('personDetailModal.errorDeleteLocation'));
       }
     } catch {
-      alert('Failed to delete location');
+      alert(t('personDetailModal.errorDeleteLocation'));
     }
   };
   // Removed: const [riskSummary, setRiskSummary] = useState(null);
 
-  const getFullName = (person) => {
-    return `${person.first_name || ''} ${person.last_name || ''}`.trim();
-  };
+  const getFullName = (person) => formatPersonName(person);
 
   const getAge = (dateOfBirth) => {
     if (!dateOfBirth) return null;
@@ -110,8 +130,8 @@ const PersonDetailModal = () => {
       <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-4xl max-h-[90vh] overflow-hidden">
           {/* Header */}
-          <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-            <div className="flex items-center space-x-4">
+          <div className="p-4 md:p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-start gap-3">
+            <div className="flex items-center space-x-4 min-w-0">
               {person.profile_picture_url ? (
                 <img 
                   src={person.profile_picture_url} 
@@ -124,7 +144,7 @@ const PersonDetailModal = () => {
                 </div>
               )}
               <div>
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                <h2 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-gray-100 break-words">
                   {getFullName(person)}
                   {person.date_of_birth && (
                     <span className="text-gray-500 dark:text-slate-400 font-normal text-lg ml-2">
@@ -133,17 +153,27 @@ const PersonDetailModal = () => {
                   )}
                 </h2>
                 {person.aliases && person.aliases.length > 0 && (
-                  <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">AKA: {person.aliases.join(', ')}</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">{t('peopleList.akaLabel', { aliases: person.aliases.join(', ') })}</p>
+                )}
+                {isOtherProject && (
+                  <p className="text-xs mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400">
+                    {t('personDetailModal.otherProjectBadge', { project: otherProjectName || t('personDetailModal.otherProjectUnknown') })}
+                  </p>
                 )}
               </div>
             </div>
-            <div className="flex space-x-2">
-              <button 
-                onClick={() => setShowReportGenerator(true)} 
-                className="p-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-accent-success hover:bg-green-600 dark:bg-green-500 hover:text-white transition-all duration-300"
-                title="Generate Report"
+            <div className="flex space-x-2 shrink-0">
+              {/* Labelled, not icon-only: reporters kept concluding person
+                  reports didn't exist because this was a bare icon (#63). */}
+              <button
+                onClick={() => setShowReportGenerator(true)}
+                className="p-2 md:px-3 md:py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-accent-success hover:bg-green-600 dark:bg-green-500 hover:text-white transition-all duration-300 flex items-center gap-2 text-sm font-medium"
+                title={t('personDetailModal.generateReportTitle')}
               >
                 <FileText className="w-5 h-5" />
+                {/* Label only where there's room; on a phone it pushed the
+                    close button off the screen entirely (#64). */}
+                <span className="hidden md:inline">{t('personDetailModal.generateReportTitle')}</span>
               </button>
               <button 
                 onClick={() => onEdit(person)} 
@@ -161,19 +191,19 @@ const PersonDetailModal = () => {
           </div>
           
           {/* Tabs */}
-          <div className="border-b border-gray-200 dark:border-gray-700">
-            <div className="flex">
-            {['details', 'relationships', 'locations', 'travel'].map((tab) => (
+          <div className="border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
+            <div className="flex min-w-max">
+            {['details', 'relationships', 'locations', 'travel', 'transactions', 'assets', 'ledger'].map((tab) => (
                <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`px-6 py-3 font-medium text-sm border-b-2 capitalize transition-all duration-300 ${
-                    activeTab === tab 
-                      ? 'border-accent-primary text-blue-600 dark:text-blue-400 bg-gradient-to-t from-white/5 to-transparent' 
+                  className={`px-4 md:px-6 py-3 font-medium text-sm border-b-2 capitalize whitespace-nowrap transition-all duration-300 ${
+                    activeTab === tab
+                      ? 'border-accent-primary text-blue-600 dark:text-blue-400 bg-gradient-to-t from-white/5 to-transparent'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                   }`}
                 >
-                  {tab}
+                  {t(`personDetailModal.tab_${tab}`)}
                   {tab === 'relationships' && connectedPeople.length > 0 && (
                     <span className="ml-2 text-xs glass px-2 py-1 rounded-lg text-blue-600 dark:text-blue-400">
                       {connectedPeople.length}
@@ -188,26 +218,34 @@ const PersonDetailModal = () => {
           <div className="overflow-y-auto" style={{ maxHeight: 'calc(90vh - 200px)' }}>
             {activeTab === 'details' && (
               <div className="p-6">
-                <div className="grid grid-cols-2 gap-6 mb-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                   {/* Basic Information */}
                   <div className="space-y-4">
                     <div>
                       <h3 className="text-lg font-semibold mb-3 flex items-center text-gray-900 dark:text-gray-100">
                         <User className="w-5 h-5 mr-2 text-gray-400 dark:text-slate-500" />
-                        Basic Information
+                        {t('personDetailModal.basicInformation')}
                       </h3>
                       <div className="space-y-3 glass rounded-lg-lg p-4">
-                        <div className="flex justify-between">
-                          <span className="font-medium text-gray-600 dark:text-gray-400">First Name:</span>
-                          <span className="font-semibold text-gray-900 dark:text-gray-100">{person.first_name || 'N/A'}</span>
+                        <div className="flex justify-between gap-3">
+                          <span className="font-medium text-gray-600 dark:text-gray-400">{t('personDetailModal.firstNameLabel')}</span>
+                          <span className="font-semibold text-gray-900 dark:text-gray-100 text-right break-words">{person.first_name || t('personDetailModal.notAvailable')}</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="font-medium text-gray-600 dark:text-gray-400">Last Name:</span>
-                          <span className="font-semibold text-gray-900 dark:text-gray-100">{person.last_name || 'N/A'}</span>
+                        {/* Added with the field itself in #61 but missed here,
+                            so a patronymic could be entered and never shown. */}
+                        {person.patronymic && (
+                          <div className="flex justify-between gap-3">
+                            <span className="font-medium text-gray-600 dark:text-gray-400">{t('personForm.patronymic')}</span>
+                            <span className="font-semibold text-gray-900 dark:text-gray-100 text-right break-words">{person.patronymic}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between gap-3">
+                          <span className="font-medium text-gray-600 dark:text-gray-400">{t('personDetailModal.lastNameLabel')}</span>
+                          <span className="font-semibold text-gray-900 dark:text-gray-100 text-right break-words">{person.last_name || t('personDetailModal.notAvailable')}</span>
                         </div>
                         {person.date_of_birth && (
                           <div className="flex justify-between">
-                            <span className="font-medium text-gray-600 dark:text-gray-400">Date of Birth:</span>
+                            <span className="font-medium text-gray-600 dark:text-gray-400">{t('personDetailModal.dateOfBirthLabel')}</span>
                             <span className="font-semibold text-gray-900 dark:text-gray-100">{new Date(person.date_of_birth).toLocaleDateString()}</span>
                           </div>
                         )}
@@ -217,47 +255,47 @@ const PersonDetailModal = () => {
                     <div>
                       <h3 className="text-lg font-semibold mb-3 flex items-center text-gray-900 dark:text-gray-100">
                         <Tag className="w-5 h-5 mr-2 text-gray-400 dark:text-slate-500" />
-                        Classification
+                        {t('personDetailModal.classification')}
                       </h3>
                       <div className="space-y-3 glass rounded-lg-lg p-4">
                         <div className="flex justify-between">
-                          <span className="font-medium text-gray-600 dark:text-gray-400">Category:</span>
+                          <span className="font-medium text-gray-600 dark:text-gray-400">{t('personDetailModal.categoryLabel')}</span>
                           <span className="px-3 py-1 bg-blue-600 text-white dark:bg-blue-500 rounded-lg text-sm font-medium">
-                            {person.category || 'N/A'}
+                            {person.category || t('personDetailModal.notAvailable')}
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="font-medium text-gray-600 dark:text-gray-400">Status:</span>
+                          <span className="font-medium text-gray-600 dark:text-gray-400">{t('personDetailModal.statusLabel')}</span>
                           <span className={`px-3 py-1 rounded-lg text-sm font-medium ${
                             person.status === 'Open' ? 'bg-green-600 dark:bg-green-500 text-white' :
-                            person.status === 'Being Investigated' ? 'bg-gradient-warning text-white' :
+                            person.status === 'Being Investigated' ? 'bg-accent-warning text-white' :
                             person.status === 'Closed' ? 'glass text-gray-800 dark:text-slate-200' :
                             'bg-blue-600 text-white dark:bg-blue-500'
                           }`}>
-                            {person.status || 'N/A'}
+                            {person.status || t('personDetailModal.notAvailable')}
                           </span>
                         </div>
                         {person.crm_status && (
                           <div className="flex justify-between">
-                            <span className="font-medium text-gray-600 dark:text-gray-400">CRM Status:</span>
+                            <span className="font-medium text-gray-600 dark:text-gray-400">{t('personDetailModal.crmStatusLabel')}</span>
                             <span className="font-semibold text-gray-900 dark:text-gray-100">{person.crm_status}</span>
                           </div>
                         )}
                       </div>
                     </div>
                   </div>
-                  
+
                   {/* Case and Additional Info */}
                   <div className="space-y-4">
                     {person.case_name && (
                       <div>
                         <h3 className="text-lg font-semibold mb-3 flex items-center text-gray-900 dark:text-gray-100">
                           <Briefcase className="w-5 h-5 mr-2 text-gray-400 dark:text-slate-500" />
-                          Case Information
+                          {t('personDetailModal.caseInformation')}
                         </h3>
                         <div className="glass rounded-lg-lg p-4">
                           <div className="flex justify-between">
-                            <span className="font-medium text-gray-600 dark:text-gray-400">Case Name:</span>
+                            <span className="font-medium text-gray-600 dark:text-gray-400">{t('personDetailModal.caseNameLabel')}</span>
                             <span className="text-blue-600 dark:text-blue-400 font-semibold">{person.case_name}</span>
                           </div>
                         </div>
@@ -267,18 +305,18 @@ const PersonDetailModal = () => {
                     <div>
                       <h3 className="text-lg font-semibold mb-3 flex items-center text-gray-900 dark:text-gray-100">
                         <Network className="w-5 h-5 mr-2 text-gray-400 dark:text-slate-500" />
-                        Connection Summary
+                        {t('personDetailModal.connectionSummary')}
                       </h3>
                       <div className="glass rounded-lg-lg p-4">
                         <div className="text-center">
                           <div className="text-3xl font-bold bg-gradient-to-r from-accent-primary to-accent-secondary bg-clip-text text-transparent">{connectedPeople.length}</div>
-                          <div className="text-sm text-gray-600 dark:text-gray-400 font-medium">Total Connections</div>
+                          <div className="text-sm text-gray-600 dark:text-gray-400 font-medium">{t('personDetailModal.totalConnections')}</div>
                         </div>
                         {connectedPeople.length > 0 && (
                           <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-                            <div className="grid grid-cols-2 gap-2 text-sm">
-                              <div className="font-medium text-gray-900 dark:text-gray-100">Outgoing: <span className="text-blue-600 dark:text-blue-400">{connectedPeople.filter(c => c.direction === 'outgoing').length}</span></div>
-                              <div className="font-medium text-gray-900 dark:text-gray-100">Incoming: <span className="text-accent-secondary">{connectedPeople.filter(c => c.direction === 'incoming').length}</span></div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                              <div className="font-medium text-gray-900 dark:text-gray-100">{t('personDetailModal.outgoingLabel')} <span className="text-blue-600 dark:text-blue-400">{connectedPeople.filter(c => c.direction === 'outgoing').length}</span></div>
+                              <div className="font-medium text-gray-900 dark:text-gray-100">{t('personDetailModal.incomingLabel')} <span className="text-accent-secondary">{connectedPeople.filter(c => c.direction === 'incoming').length}</span></div>
                             </div>
                           </div>
                         )}
@@ -290,17 +328,17 @@ const PersonDetailModal = () => {
                 {/* Notes */}
                 {person.notes && (
                   <div className="mb-6">
-                    <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">Notes</h3>
+                    <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">{t('propertyDetailModal.notesLabel')}</h3>
                     <div className="glass rounded-lg-lg p-4">
                       <p className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">{person.notes}</p>
                     </div>
                   </div>
                 )}
-                
+
                 {/* OSINT Data */}
                 {person.osint_data && person.osint_data.length > 0 && (
                   <div className="mb-6">
-                    <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">OSINT Data</h3>
+                    <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">{t('personDetailModal.osintData')}</h3>
                     <div className="space-y-2">
                       {person.osint_data.map((osint, index) => (
                         <div key={index} className="flex items-center space-x-3 p-3 glass rounded-lg hover:bg-gray-100 dark:bg-gray-700 transition-all duration-300">
@@ -320,7 +358,7 @@ const PersonDetailModal = () => {
                 {/* Custom Fields */}
                 {person.custom_fields && Object.keys(person.custom_fields).length > 0 && (
                   <div>
-                    <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">Custom Fields</h3>
+                    <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">{t('personDetailModal.customFields')}</h3>
                     <div className="space-y-2">
                       {Object.entries(person.custom_fields).map(([key, value]) => {
                         const fieldDef = customFields.find(f => f.field_name === key);
@@ -351,7 +389,7 @@ const PersonDetailModal = () => {
               <div className="p-6">
                 {locations.length > 0 ? (
                   <div>
-                    <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">Locations</h3>
+                    <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">{t('personDetailModal.locationsTitle')}</h3>
                     <div className="space-y-3">
                       {locations.map((location, index) => (
                         <div key={index} className="p-4 glass rounded-lg">
@@ -374,7 +412,7 @@ const PersonDetailModal = () => {
                             <button
                               onClick={() => handleDeleteLocation(index)}
                               className="ml-3 p-1.5 text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 transition-colors duration-150 flex-shrink-0"
-                              title="Remove location"
+                              title={t('personDetailModal.removeLocationTitle')}
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -385,7 +423,7 @@ const PersonDetailModal = () => {
                   </div>
                 ) : (
                   <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-                    No location data available
+                    {t('personDetailModal.noLocationData')}
                   </div>
                 )}
               </div>
@@ -393,10 +431,47 @@ const PersonDetailModal = () => {
             
             {activeTab === 'travel' && (
               <div className="p-6">
-                <TravelPatternAnalysis 
-                  personId={person.id} 
+                <TravelPatternAnalysis
+                  personId={person.id}
                   personName={getFullName(person)}
                 />
+              </div>
+            )}
+
+            {activeTab === 'transactions' && (
+              <div className="p-6 space-y-6">
+                <div>
+                  <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">{t('personDetailModal.receivedTitle')}</h3>
+                  <TransactionTable transactions={personTransactions.filter(txn => txn.direction === 'received')} emptyText={t('personDetailModal.nothingReceived')} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">{t('personDetailModal.givenTitle')}</h3>
+                  <TransactionTable transactions={personTransactions.filter(txn => txn.direction === 'given')} emptyText={t('personDetailModal.nothingGiven')} />
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'assets' && (
+              <div className="p-6">
+                <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">{t('personDetailModal.assetsCurrentlyHeld')}</h3>
+                {personAssets.length === 0 ? (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 py-4 text-center">{t('personDetailModal.noAssetsHeld')}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {personAssets.map(a => (
+                      <div key={a.id} className="flex justify-between items-center p-3 rounded-lg bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-700">
+                        <span className="text-gray-800 dark:text-gray-200 font-medium">{a.name}</span>
+                        <span className="text-xs text-gray-500 dark:text-gray-400 capitalize">{[a.category, a.status].filter(Boolean).join(' · ')}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'ledger' && (
+              <div className="p-6">
+                <EntityLedger entityType="people" entityId={person.id} />
               </div>
             )}
           </div>

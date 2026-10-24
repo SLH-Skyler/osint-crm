@@ -5,6 +5,946 @@ All notable changes to GHOST OSINT CRM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.0] - 2026-10-21
+
+### ✨ Added
+
+- **Project Owner role (#95).** Projects now have three roles: Owner >
+  Manager > Investigator. Like the others it is per project, so the same
+  person can own one project, manage another and only investigate in a
+  third. An owner can do everything a manager can, plus add, promote,
+  demote and remove managers. Only an administrator can make someone an
+  owner or change or remove one, and deleting a project stays admin-only.
+  Existing members keep their role; nobody becomes an owner until an
+  administrator makes them one. Migration `20261021000001` widens the
+  allowed roles; no data changes.
+
+### 🔒 Changed
+
+- Membership rules are now rank-based: owners and managers can only act
+  on members ranked below them and grant roles below their own, and
+  nobody but an administrator can change their own membership.
+
+### 📝 Documentation
+
+- Roles and the user hierarchy are documented in a new README section
+  (Roles & Permissions) and in full in USER_MANAGEMENT.md, with a
+  permission table for every role; QUICK-START, SECURITY.md and the API
+  catalogue are updated to match.
+
+### Upgrading
+
+```
+git pull
+docker compose pull && docker compose up -d     # amd64
+docker compose up -d --build                    # ARM (images are amd64-only)
+```
+
+The migration runs automatically at startup and changes no data. Existing
+managers keep their role; to use the new tier, an administrator adds an
+owner from the project's member list.
+
+## [2.18.4] - 2026-10-21
+
+### 🔒 Fixed
+
+- **Project managers could manage other managers, and themselves (#95).**
+  The membership endpoints only checked that the caller was a manager on
+  the project, never who was being changed or which role was granted. A
+  manager could add or promote managers, demote or remove other managers
+  (including whoever appointed them), and change or remove their own
+  membership. A manager can now only add and remove investigators, and
+  cannot change their own membership; only an administrator can assign,
+  change or remove a manager. Enforced by the API, and the members dialog
+  hides the controls a manager can no longer use.
+
+### Upgrading
+
+```
+git pull
+docker compose pull && docker compose up -d     # amd64
+docker compose up -d --build                    # ARM (images are amd64-only)
+```
+
+No database changes.
+
+## [2.18.3] - 2026-10-10
+
+### 🐛 Fixed
+
+- **Upgrading from 2.16 or earlier left the backend "unhealthy" (#94).**
+  2.17.0 put the bundled PostgreSQL container behind a `local-db` Compose
+  profile, so a `.env` without `COMPOSE_PROFILES=local-db` — every `.env`
+  created before 2.17 — started no database at all. The bundled database
+  starts by default again. Using your own PostgreSQL server is now an
+  opt-in instead: add
+  `COMPOSE_FILE=docker-compose.yml:docker-compose.external-db.yml` to
+  `.env`. **If you cleared `COMPOSE_PROFILES` on 2.17/2.18 to use an
+  external server, add that line** — otherwise an idle bundled database
+  container will start alongside (GHOST keeps using the server in
+  `DB_HOST`).
+- When the backend cannot reach PostgreSQL at startup it now logs the
+  host and port it tried and what to check, instead of only a stack trace.
+
+## [2.18.2] - 2026-10-02
+
+### 🐛 Fixed
+
+- **The app had no favicon, and its home-screen icons were broken.** The two
+  logo files had a leading space in their names, so `/logo192.png` and
+  `/logo512.png` returned the HTML page, and `favicon.ico` was an empty
+  file. The logos are renamed and the browser tab now uses the logo.
+
+### 📝 Documentation
+
+- README, QUICK-START, USER_MANAGEMENT and SECURITY brought up to date with
+  2.18: project membership and roles, the API reference, ARM hosts (the
+  prebuilt images are amd64 only), running the backend without Docker, and
+  new troubleshooting entries. QUICK-START's `.env` command was missing
+  `COMPOSE_PROFILES=local-db`, without which no database container starts.
+- The wiki text was refreshed from v2.8 to v2.18.1.
+
+### 🧹 Removed
+
+- Third-party agent skill files under `.agents/` that had been committed by
+  accident, and a design spec for a feature that shipped in 2.17.0.
+- Dead code, with no change in behaviour: five frontend packages nothing
+  imported (`html2canvas`, `jspdf`, `jspdf-autotable`, `recharts`,
+  `web-vitals`), two unused API client objects, and unused imports and
+  helpers in the backend — including a leftover `child_process` import in
+  `server.js`. The production frontend bundle is byte-identical before and
+  after.
+- SECURITY.md no longer claims that input is stripped of `<script>` tags
+  before storage. No such code exists; output escaping is done by React.
+
+## [2.18.1] - 2026-10-02
+
+### 🐛 Fixed
+
+- **`/api/docs` rendered a blank page behind the bundled nginx (#93).** The
+  page's script and stylesheet were served from URLs ending in `.js` and
+  `.css`, and the frontend's nginx config routes every such URL to its own
+  static files before the `/api` proxy rule is considered — so they
+  returned 404. They are now served from extensionless URLs, which are
+  proxied like any other API route. No nginx change is needed, so this also
+  holds for custom reverse proxies using the same pattern.
+- **Advanced search through the MCP server ignored the search term.** The
+  spec documented a `q` parameter the endpoint never read (it reads
+  `searchText`, `searchIn[]`, `categories[]`, `statuses[]` and date/sort
+  options), so `ghost_get_search_advanced` returned every person in scope.
+  The real parameters are documented and the MCP server now sends array
+  filters correctly.
+- **`ghost_delete_wireless_networks_associate` always failed with a 500.**
+  The endpoint reads `person_id` / `business_id` from a request body the
+  spec did not declare, so the tool sent none.
+- **Project create and delete were not marked admin-only** in the spec, and
+  delete's `confirm_name` was undocumented, so a non-empty project could
+  not be deleted through the MCP server.
+- **The export endpoint's description claimed it exports every record.** It
+  does not include crypto wallets, relationship rows, or projects and their
+  members; the description now says so. Export/import itself is unchanged.
+
+### ✨ Added
+
+- **Previously undocumented filters** are in the spec and therefore usable
+  from the API reference and the MCP server: audit logs (entity, user,
+  action, date range, paging), assets (category, status, case, search,
+  holder, map bounds), transactions (business, wallet, tx hash, subject and
+  venue references, case, date range, map bounds), locations, the ledger's
+  case and date range, and `case_id` on people.
+- **A test workflow.** The backend suite now runs on every push and pull
+  request. It checks that every route is documented and that each
+  operation's query parameters and admin requirement match its handler.
+  2.18.0's notes described this guard as failing the build; until now
+  nothing ran it automatically.
+
+### 🔧 Changed
+
+- **MCP server v1.2.1.** A tool-name collision in a future spec is logged
+  and the duplicate skipped, instead of stopping the server at startup.
+
+## [2.18.0] - 2026-10-01
+
+### ✨ Added
+
+- **Interactive API reference at `/api/docs` (#93).** Swagger UI over the
+  instance's own OpenAPI document, for signed-in users. "Try it out" sends
+  requests with your session, so every call runs under your own role and
+  project memberships — and writes and deletes are real. There is no
+  Authorize step: GHOST authenticates with the session cookie, which the
+  browser sends by itself. Set `API_DOCS_ENABLED=false` to remove the page.
+- **Public API catalogue.** The same reference for the latest release,
+  read-only, at https://elm1nst3r.github.io/GHOST-osint-crm/ — republished
+  on every release tag. Each endpoint shows the MCP tool it becomes.
+- **MCP server v1.2.** Twelve new tools: crypto wallets (list, get, create,
+  update, delete), project members (list, add, change role, remove),
+  single-address geocode, nearby wireless networks, and the user directory.
+  Lists of project-scoped records accept `project_id`. No existing tool was
+  renamed or removed.
+
+### 🔧 Changed
+
+- **The OpenAPI document now covers the whole API** — 127 operations, up
+  from 96. Crypto wallets, project membership, export/import, the branding,
+  geocoding, update-check and retention settings, and several wireless,
+  geocoding and system endpoints had never been added to it. A new test
+  compares the document against the Express routes and fails when either
+  side has an entry the other lacks.
+- **Some endpoints are documented but deliberately not exposed as MCP
+  tools**: instance settings, whole-database export/import, bulk delete,
+  batch geocoding, health/version probes and file uploads. They carry
+  `x-mcp-exclude` in the spec.
+
+### ⚠️ Upgrade note
+
+- **Update `mcp/` when you update GHOST.** MCP server 1.1 and earlier
+  assume every request body is JSON; the spec now includes two file-upload
+  endpoints, and an old MCP server pointed at a 2.18.0 backend fails at
+  startup.
+
+## [2.17.0] - 2026-09-16
+
+### ✨ Added
+
+- **Five new community-translated languages (#59).** French, German,
+  Spanish, Chinese (Simplified) and Russian join English in Settings →
+  General, via the project's Crowdin integration. The translated catalogs
+  had already landed on `main` through Crowdin PRs but weren't wired into
+  `frontend/src/i18n.js` yet — that's the step this release completes.
+- **Server-side global application settings (#91).** App name, logo,
+  default language, and default theme mode move from browser `localStorage`
+  into the database — admin-configured once, shared across every user and
+  device instead of per-browser. Each user can still set their own
+  language/theme, which takes precedence over the admin default
+  (`PUT /api/auth/me`). API keys, integrations, the update-check toggle, and
+  archived-project retention were already server-side from #62.
+
+### 🔧 Changed
+
+- **External PostgreSQL server support (#75).** `docker-compose.yml`'s
+  backend service was hardcoding `DB_HOST`/`DB_PORT` to `db`/`5432`,
+  silently overriding whatever was set in `.env`. Fixed so both are read
+  from `.env` like the other database variables. The bundled `db` container
+  now sits behind a `local-db` Compose profile — clearing
+  `COMPOSE_PROFILES` in `.env` skips starting it entirely, for anyone
+  pointing GHOST at their own PostgreSQL server. **Existing `.env` files
+  need `COMPOSE_PROFILES=local-db` added before the next
+  `docker compose up -d`**, or the bundled database will stop starting.
+  Full MySQL/MariaDB support remains out of scope — see the issue for why.
+
+## [2.16.0] - 2026-08-31
+
+### ✨ Added
+
+- **Delete a project together with all of its data (#88).** Deleting a
+  project used to be refused until every entity inside it had been removed by
+  hand. The delete action now opens a confirmation dialog listing what it
+  will destroy — people, organizations, relationships, cases, properties,
+  assets, transactions, crypto wallets, wireless networks, travel records,
+  tasks — and removes all of it plus the project in a single transaction.
+  When the project holds data the operator must type its exact name to
+  confirm. Data in other projects, and global configuration (data model,
+  OSINT tools, integrations), are untouched. `GET /api/projects/:id/stats`
+  exposes the per-entity counts.
+- **Archived-project retention policy (#88).** A new admin setting
+  (Settings → General) can automatically delete projects that have stayed in
+  the "Closed" status longer than a chosen window (30 / 90 / 180 / 365 days),
+  along with all their data, via a daily background sweep. The default is
+  "Never" — the feature does nothing until an operator opts in. A new
+  `projects.archived_at` column records when a project was closed and is the
+  clock the window counts from.
+
+## [2.15.0] - 2026-08-30
+
+### ✨ Added
+
+- **Project-based data isolation (#83).** A *Project* is now the hard boundary
+  around an investigation — effectively a separate database per investigation.
+  Every entity (people, businesses, locations, assets, transactions, wireless
+  networks, wallets, relationships, todos, cases) belongs to exactly one
+  project, and the app works within one active project at a time via a
+  top-bar switcher. *Cases* become a lighter optional grouping nested inside
+  a project. Cross-project linking is off by default and enabled per project.
+  Existing data is migrated onto an auto-created "Default Project" — no data
+  is lost on upgrade.
+- **Project membership and per-project roles (#84).** A `project_members`
+  table gives each user a role *per project* — `manager` (edits project
+  settings, manages membership) or `investigator` (full CRUD on that
+  project's data). Admins stay global. Non-admins now only see and can reach
+  projects they're a member of, enforced on every project-scoped route — not
+  just hidden in the selector.
+- **Cryptocurrency wallet entities (#82).** `crypto_wallet` is a first-class
+  entity (address, network, label, tags like suspicious/exchange/mixer/scam,
+  and an external-reference URL for linking out to a specialist tool such as
+  GraphSense). Manual wallet-to-wallet transactions (hash, amount, timestamp)
+  and wallet↔wallet/person/business relationships show up in the relationship
+  graph alongside everyone else. GHOST does no chain analysis itself — this is
+  the entity/citation layer only.
+- **Relationships are a real table.** Connections used to live only as JSONB
+  arrays on `people` rows; they're now independently addressable rows with
+  their own project/case scope, which is what made project isolation and
+  cross-project linking tractable.
+
+### 🐛 Fixed
+
+- **The project-members dialog is no longer clipped to the sidebar (#84).** It
+  rendered as a fixed-position modal mounted inside the sidebar, whose
+  off-canvas transform made it the containing block — pinning the modal to a
+  ~256px column and cutting the member-remove buttons off the right edge. It
+  now renders through a portal.
+- **Audit log entries for people and businesses show who made the change
+  (#84).** The audit helper used by those routes never recorded the user id,
+  so every person/business edit displayed as "System".
+- **Dark mode: inputs, selects and textareas written with only light-mode
+  styling no longer render white (or white-on-white) (#87).** A base-layer
+  fallback gives every native form control a sane dark appearance; components
+  with explicit dark styling are unaffected.
+- **Person-card locations kept only their coordinates (#62).** Type, city,
+  state, country and notes entered on a person's location were dropped on
+  save.
+- **Advanced Search could not be closed on mobile (#64).**
+- **Selecting a Yandex or LocationIQ address suggestion crashed the form
+  (#62).**
+- Addressed a batch of CodeQL findings — query-parameter type confusion,
+  missing rate limiting on a route, a dead XSS filter, and log injection.
+
+### 🌍 Translations
+
+- German, Spanish, French and Chinese catalogs are now mirrored from Crowdin
+  but not yet enabled in the language picker — they're still largely
+  untranslated. Russian and English remain the shipped languages.
+
+## [2.14.2] - 2026-08-11
+
+### 🐛 Fixed
+
+- **Fresh installs of v2.13.0+ no longer crash-loop.** Migration
+  `20260809000002` (introduced with per-provider geocoding caches in #62) ran
+  an `UPDATE` against `geocoding_cache` before that table existed — it's
+  created lazily at runtime by the geocoding service, after migrations run.
+  On any virgin database this made `initializeDatabase()` fail and the
+  backend container restart-loop forever. Existing installs were unaffected
+  since the table already existed from prior runtime use, which is why this
+  went unnoticed until a brand-new install hit it. The migration is now a
+  no-op when the table isn't there yet. (#81, reported with root cause and a
+  verified patch by @JakeTheRabbit)
+- Added `.gitattributes` to force LF line endings on shell scripts, so
+  `docker-entrypoint.sh` doesn't get CRLF'd on a Windows checkout and fail to
+  exec in the alpine container.
+
+## [2.14.1] - 2026-08-09
+
+### 🐛 Fixed
+
+- **Geocoding errors now say what the provider actually reported.** Configuring
+  a Yandex or LocationIQ key and having it rejected produced a generic "check
+  it in Settings", when the provider had explained the reason — an invalid key,
+  an inactive key, and a key issued for a different API product each need a
+  different fix. The provider's own message is now shown in the app and written
+  to the backend log. API keys are never logged.
+- The fallback message also names the most common cause: a key issued for
+  Yandex's JavaScript API rather than the **Geocoder HTTP API**.
+
+### 🌍 Translations
+
+- **Russian is now complete** — every interface string, including the report
+  output and everything added in 2.11–2.14, courtesy of @hunterghoul1 via
+  Crowdin. German, Spanish, French and Chinese catalogs updated too.
+
+## [2.14.0] - 2026-08-09
+
+### 🧰 Added — Bulk import for OSINT tools
+
+- Tools could only be added one at a time, which is the wrong shape for the
+  problem: people keep tool lists in spreadsheets and shared repos. The Tools
+  page now has an **Import** button accepting pasted or uploaded **CSV, TSV or
+  JSON**.
+- Built for other people's files. `URL` / `Link` / `Website` and `Tool Name` /
+  `Name` are all recognised, unrecognised columns are ignored rather than
+  failing the file, bare domains like `shodan.io` are turned into URLs, and
+  tags split on `;`, `,` or `|`.
+- **Preview before anything is written**: how many will be added, how many
+  already exist, and which rows have problems — with row numbers matching your
+  spreadsheet. Existing tools are skipped by default, or can be updated.
+- Updating only overwrites the fields a row actually supplies, so importing a
+  partial file can't blank out the links, categories and tags of the tools it
+  touches.
+- Available to the **MCP tools** as `ghost_create_tools_bulk_import`, so an
+  assistant importing a tool list makes one request instead of one per row.
+
+### 🗺️ Added — LocationIQ geocoding provider
+
+- A third geocoding option alongside OpenStreetMap and Yandex, selectable in
+  Settings → General → Geocoding with your own API key. Commercial-grade
+  coverage, a free tier that needs no payment details, and no restriction on
+  which map the results are displayed on.
+- Geocoding providers now live in a registry, so each has its own request queue
+  and its own stored API key. Configuring or switching one no longer disturbs
+  another, and adding a further provider needs no changes to the API, the
+  validation schema or the settings screen.
+
+### 🐛 Fixed
+
+- **A Yandex API key configured in 2.13.0 is preserved on upgrade.** Keys are
+  now namespaced per provider; without the migration the key would have been
+  silently dropped, leaving Yandex selected but quietly falling back to
+  OpenStreetMap.
+
+## [2.13.0] - 2026-08-09
+
+### 🔄 Added — Update notifications and prebuilt images
+
+- GHOST now tells you when a new version is released. The **server** checks the
+  public release list (the browser never contacts GitHub), caches the result for
+  six hours, and shows a dismissible banner. Nothing is downloaded or installed
+  automatically — updating stays a deliberate operator action.
+- **On by default, switchable off** in Settings → General → Updates. When
+  disabled the server makes no outbound request at all, not merely a hidden
+  banner, for isolated deployments.
+- **Container images are published to GHCR on every release**, so updating is
+  `docker compose pull && docker compose up -d` — seconds, with no local build
+  and no build toolchain. `GHOST_VERSION` pins a release; the default tracks
+  latest. Building from source still works for development.
+
+### 🗺️ Added — Yandex as an optional geocoding provider (issue #62)
+
+- OpenStreetMap/Nominatim handles informal Russian address forms poorly, so
+  **Yandex Maps can be selected** in Settings → General → Geocoding with an
+  operator-supplied API key. Nominatim stays the default and needs no
+  configuration.
+- The API key is stored server-side and is **write-only** — the app reports
+  only that a key exists, never its value. Selecting Yandex without a key falls
+  back to Nominatim rather than failing every lookup, and says so.
+- The address cache is now kept **per provider**. Previously it was keyed on the
+  address alone, so switching provider kept serving the previous provider's
+  results — including the poor matches that prompted the switch.
+
+### 🐛 Fixed — Report configuration didn't describe the report (issue #77)
+
+- **The section checkboxes did nothing** for any report type except
+  Comprehensive: the type overrode them at generation time, and the preview
+  applied the same override. A report type is now a *preset* that fills in the
+  checkboxes, which you can then adjust — what's ticked is what's generated.
+- **Report scope is now selectable** (all data / one case / one person). It used
+  to be fixed by wherever the dialog was opened from, so from the dashboard it
+  was permanently "All data" and choosing Person Profile did nothing.
+- **OSINT data now actually appears in reports.** The switch existed from the
+  start but no generator ever read it, so OSINT findings were absent from every
+  report ever produced. Timeline and Audit Trail were likewise wired to nothing
+  and have been removed; Businesses gained the checkbox it never had.
+
+### 🐛 Fixed — Mobile problems found on a real device (issue #64)
+
+- Case cards no longer run off the side of the screen.
+- Person card action buttons no longer sit on top of the name with the delete
+  button clipped — they're always visible on touch screens.
+- **The person detail window can be closed again**: labelling the Generate
+  Report button in 2.12.0 pushed the close button off a phone screen. The seven
+  detail tabs now scroll rather than overflowing.
+- The relationship graph legend showed raw internal names for the two
+  relationship types added in 2.12.0; the person detail view never displayed the
+  patronymic.
+
+### 🐛 Fixed — Other
+
+- **Advanced Search could not find people by patronymic** (issue #78), or by the
+  full name as displayed. Search now matches any name part and both conventional
+  orderings.
+- **The relationship layout selector kept showing "Hierarchical"** after
+  switching layouts, making it impossible to switch back (issue #76).
+- **The dashboard relationship panel showed a Close button that did nothing**
+  instead of a Fullscreen button (issue #79).
+
+## [2.12.0] - 2026-08-08
+
+### 🐛 Fixed — Data Model options never reached the person dropdowns (issue #67)
+
+- Person **categories and statuses rendered from a hardcoded list**, not from
+  `model_options`. The person form fetched model options but only picked
+  connection, location, CRM and OSINT types — so an option added under
+  Settings → Data Model genuinely never appeared anywhere. Now read from the
+  database in the person form, both people list filters, and Advanced Search,
+  with the static list kept as a fallback so a type with no rows can't produce
+  an empty dropdown.
+- Status badge colours are preserved when options load from the database
+  (`mergeOptionMeta`), and the seeded **"Related to Person of Interest"**
+  category — which was missing from the hardcoded list entirely — now shows up.
+
+### 🐛 Fixed — "Export All Data" was incomplete (issue #74)
+
+- The export omitted **assets, transactions, properties and wireless
+  networks**, making the file unusable for backup, migration or disaster
+  recovery. Export is now version 1.3 and covers them; import restores them,
+  remapping owner and party references onto the newly-inserted ids the same
+  way people and businesses already were.
+- Import also gained `patronymic` and `owner_business_id` — the latter
+  resolved in a second pass, since a business may be owned by one imported
+  later in the file.
+
+### 🌍 Added — Report output is translatable (issue #63)
+
+- The generated `.md` and `.docx` reports and the entity ledger were the last
+  content still hardcoded in English. All headings, table columns, stat
+  labels, task states and summary sentences now come from the translation
+  catalog (127 new keys). Dates in reports follow the report's language
+  instead of being pinned to US English.
+
+### 👤 Changed — Name order follows the language (issue #61)
+
+- Russian, Ukrainian, Belarusian, Bulgarian and Kazakh conventionally lead
+  with the family name (*Фамилия Имя Отчество*). Person names now display —
+  and the person form lays its fields out — in the order the active language
+  expects. Display convention only; stored data is unchanged.
+
+### 🕸️ Added — Conflict-of-interest groundwork (issue #65)
+
+Built from a contributor's real use case: tracking board members of councils
+against the private interests of those same people.
+
+- **Board members are distinct from employees.** Employee entries can be
+  marked as a decision maker and draw as a separate governance relationship.
+- **Employee entries link to a real person record** via a picker, instead of
+  being matched by name. Name matching remains only as a fallback for existing
+  entries — it collides between people who share a name, which is exactly the
+  false positive a conflict view must not invent.
+- **Ownership chains** — a business can be owned by another business, so
+  holding and shell structures are representable instead of collapsing to a
+  single hop.
+- **Transaction tags** — free-form labels with a filter built from the tags in
+  use, usable from the MCP tools for automated passes over a tagged subset.
+  Adds an *Endorsement / Promotion* transaction type.
+- **Relationship layers** — the entity network's three edge toggles become six
+  named layers (governance, employment, financial, social, investigative,
+  other), each independently toggleable with a solo button.
+
+## [2.11.0] - 2026-08-08
+
+### 🌍 Added — Data-model and enum labels are translatable (issue #67)
+
+- The option labels behind every dropdown — person categories and statuses,
+  CRM statuses, connection and location types, transaction/asset/property
+  types, OSINT data types — now render in the selected language. They had been
+  stuck in English regardless: the shipped defaults are seeded into Postgres at
+  boot (`backend/config/seedDefaults.js`) and rendered straight off the row, so
+  they never passed through `t()` and never reached the translation catalog.
+  128 new keys across 17 namespaces, wired into 18 components.
+- Translation happens at render time and never touches stored values, so
+  `person.category` still holds `'Suspect'` in every language — no migration,
+  no risk to existing records.
+- **Options you rename keep your wording**, and options you create yourself are
+  left exactly as typed — only untouched built-in labels are translated.
+  Settings → Data Model deliberately still shows raw stored labels, since
+  that's where the stored value is edited.
+
+### 👤 Added — Patronymic on people (issue #61)
+
+- People have a proper `patronymic` field, shown between the given and family
+  name (*Иван Петрович Сидоров*) across the person view, lists, case view,
+  relationship diagram and reports, and searchable both on its own and as part
+  of the full name. Optional, so existing records are unaffected.
+- Full-name construction moved to `CONCAT_WS`, which also fixes a latent
+  trailing space for people with no surname.
+
+### 📄 Added — Person reports actually scope to the person (issue #63)
+
+- A report generated from a person now covers *that person* — profile,
+  connections, locations, OSINT data — and opens on the Person Profile type.
+  Previously the selected person was used only for the report title while the
+  body listed everyone in their case, making the output indistinguishable from
+  a case report. The button on the person view is now labelled rather than a
+  bare icon.
+- The **.docx export had no connections section at all**, so connections were
+  silently dropped from every Word report. Added, along with date of birth and
+  aliases in Word person profiles.
+
+### 📱 Added — Responsive layout, stages 1–2 (issue #64)
+
+- **The sidebar is now an off-canvas drawer** below tablet width, behind a top
+  bar, dismissed by tapping outside, Escape, the close button, or picking a
+  section. Its widths had been written desktop-first, which under Tailwind's
+  mobile-first breakpoints meant the sidebar was at its *widest* on the
+  narrowest screen — 288px of navigation on a 375px phone.
+- 50 fixed multi-column grids stack on phones; dialogs cap at 90% viewport
+  height and scroll; page headers, list filter rows and the person form's
+  repeat-entry rows wrap instead of forcing the page to scroll sideways.
+- Desktop is unchanged by design: each existing grid value is pinned at a
+  breakpoint, so the rendered CSS at and above it is identical.
+- Still to come: data tables and virtualised lists (stage 3), map and
+  relationship graph touch handling (stage 4).
+
+### 🐛 Fixed
+
+- **Advanced Search filters rendered blank and filtered on nothing** — the
+  CRM-status, location-type and connection-type filters read `option_value` /
+  `option_label` off getters that only ever returned `{ value, label }`. Broken
+  in English too, unrelated to translation.
+- **Restored four Russian coordinate strings** that a Crowdin sync reverted to
+  English: the `lng`→`lon` placeholder rename that fixed #69 invalidated their
+  translations upstream.
+- **MCP duplicate detection accounts for the patronymic**, so two people
+  differing only in patronymic are no longer flagged as duplicates of each
+  other.
+
+## [2.10.0] - 2026-07-24
+
+### 🌍 Added — Internationalization & community translations (issue #59)
+
+- The entire frontend now renders through **react-i18next**. Every UI string
+  lives in a translation catalog (`frontend/src/locales/en/translation.json`,
+  ~1,380 keys) instead of being hardcoded.
+- **Crowdin integration** (`crowdin.yml`) connects the source catalog to
+  community translators and mirrors per-language files back into the repo;
+  Settings → General has a language picker (`SUPPORTED_LANGUAGES` in
+  `i18n.js`). Wiring a newly translated language in is a one-line manual step.
+- Deliberately out of scope this pass: backend error messages, report/PDF
+  output content, MCP tool descriptions, and RTL language support.
+
+### 🎨 Added — Appearance & theming
+
+- New **Appearance settings tab**: theme mode (light / dark / system), accent
+  color, layout density, and surface style, backed by a runtime design-token
+  system and a `ThemeContext`.
+- Streamlined visual language throughout — quieter surfaces, removed gradient
+  glow effects, accent-driven controls.
+
+### 🕸️ Added — Employer/employee edges in the Entity Network
+
+- A business's employees are matched to existing people by exact,
+  case-insensitive full name and drawn as edges. The relationship is split into
+  two directed connection types (`employer` and `employee`); the derived edge
+  runs business → person so the employer is ranked at the top in hierarchical
+  layout. Deduplicates against an existing owner link.
+- A Knex migration relabels the old `Employer/Employee` option to `Employer`
+  and adds the `Employee` type on existing databases at startup.
+
+### 🐛 Fixed
+
+- **Adding a holder to an asset silently did nothing** — `initial_holder` was
+  stripped by the create schema's unknown-field validation before the route
+  could read it, and the holder picker was missing from the edit form
+  entirely. The schema now declares the field and the edit form offers
+  "Transfer to New Holder".
+- **Created/edited tools didn't appear until reload** — the tool form now
+  refetches on save (the same stale-list pattern fixed for businesses in
+  #55). Removed a dead, unthrottled geocoding service that bypassed the
+  Nominatim rate-limit queue added in 2.9.1 (#57).
+
+## [2.9.1] - 2026-07-08
+
+### 🐛 Fixed
+
+- **Regular (non-admin) users locked out with "System Offline"** (issue #58):
+  the frontend requested two admin-only endpoints during startup for every
+  user and treated the expected 403s as an outage.
+  - `GET /settings/custom-fields` is now readable by any authenticated user
+    (every user needs the definitions to render person profiles); writes stay
+    admin-only. The OpenAPI spec reflects the change.
+  - The System Health widget is admin-only in the UI and additionally hides
+    itself (and stops polling) on 403 instead of declaring the system offline.
+  - `fetchAPI` errors now carry the HTTP status so "no permission" can never
+    again be conflated with "backend down".
+- **Adding an address failed with "Geocoding service returned 429"**
+  (issue #57): nothing throttled outbound calls to Nominatim, whose public
+  API allows 1 request/second — address-autocomplete fired per keystroke and
+  batch geocoding ran 3 concurrent, getting the instance rate-limited so even
+  single saves failed.
+  - All Nominatim requests are now serialized through a queue with 1.1s
+    spacing, and a provider 429 gets one automatic retry after backing off.
+  - Autocomplete is debounced client-side (one request per typing pause).
+  - Provider rate-limiting is reported as its own failure reason
+    (`rate_limited`) with a clear "wait a few seconds" message in every
+    geocoding dialog, instead of a raw status code.
+
+## [2.9.0] - 2026-07-08
+
+### ✨ Added — URL routing in the frontend (issue #52)
+
+- The UI now uses **react-router**: every section has a URL (`/people`,
+  `/businesses`, `/relationships`, `/map`, …), the browser back/forward
+  buttons navigate between views instead of leaving the site, and views can
+  be bookmarked or shared.
+- **Deep links to entities**: `/people/:id` and `/businesses/:id` open the
+  corresponding detail modal directly.
+- No web-server changes needed — the existing nginx SPA fallback serves all
+  routes.
+
+### ✨ Added — Knex schema migrations (issue #48)
+
+- The database schema is now managed by **Knex migrations** in
+  `backend/migrations/`, run automatically at startup (or manually with
+  `npx knex migrate:latest`). Future schema changes ship as new migration
+  files instead of edits to startup code.
+- **Existing databases are adopted seamlessly**: the baseline migration is
+  the previous idempotent DDL, so on upgrade it simply records itself and
+  changes nothing. Fresh installs get the full schema from the baseline.
+- Default model options are seeded on every boot (outside migrations) so
+  upgrades can introduce new defaults; user edits are never overwritten.
+- `initializeDatabase()` in `server.js` (600 lines of DDL) is gone;
+  `server.js` shrinks to ~650 lines total.
+
+### ✨ Added — Entity Network improvements (issues #50, #56)
+
+- **Ownership edges**: businesses are connected to their owner in both graph
+  views (from `owner_person_id`), so they're no longer isolated islands.
+- **Transaction edges**: a new toggle draws aggregated giver→receiver edges
+  from the transaction log (gifts, purchases, transfers…) between people and
+  businesses, labelled with the transaction types and counts.
+- **Edge-class toggles** in the Obsidian view: People / Ownership /
+  Transactions can be switched independently.
+- **Crash-loop fixed** (issue #56): creating a graph connection to a business
+  node used to persist `person_id: null`, which crashed every subsequent
+  render of the Entity Network and drove a reload/request storm into the rate
+  limiter ("System Offline", HTTP 403s). Person↔business ad-hoc connections
+  are now blocked with a clear message, all graph components skip null
+  connection targets, and the person schema drops such entries on write so
+  affected databases **self-heal on the next save**.
+- New **section-level error boundary**: a render error in one view shows an
+  inline error with a retry button instead of white-screening the whole app.
+
+### ✨ Added — MCP server v1.1 (issues #43, #44)
+
+- **Respawn cache**: session cookie and OpenAPI spec are cached in
+  `~/.ghost-mcp/` (0600 perms), so clients that spawn a fresh process per
+  tool call skip the ~0.4s login + spec fetch. Stale cookies self-correct via
+  re-login-on-401; disable with `GHOST_MCP_CACHE=off`, tune spec TTL with
+  `GHOST_MCP_SPEC_TTL` (default 600s).
+- **Transaction duplicate detection**: `ghost_create_transactions` refuses
+  creates matching an existing transaction on type, date, both parties and
+  value — guards repeated document imports (e.g. Form 700 batches). Same
+  `ignorePossibleDuplicates: true` escape hatch as people/businesses.
+
+### 🐛 Fixed
+
+- **Businesses could not be edited** (issues #53, #55): Postgres returns
+  `DECIMAL` lat/lng columns as strings and `.toFixed()` on them white-screened
+  the edit form. Same latent crash fixed in the travel-history edit form.
+- **Business owner and employee count never displayed** (issue #55): the list
+  read fields the API doesn't return (`owner_first_name`, `employee_count`)
+  instead of `owner_name` and the `employees` array.
+- **Businesses list refreshes after create/edit** instead of showing stale data.
+- **OSINT tool tags invisible in the light theme** (issue #54): chips combined
+  `text-white` with a `.glass` background that wiped their gradient; replaced
+  with explicit light/dark badge colors.
+- **Custom location types now show on the Locations map** (issue #51): active
+  `location_type` options from Settings get deterministic colors, filter
+  chips, legend entries and icons; untyped locations fall back to "Other"
+  instead of silently disappearing.
+
+### 🔧 Improved
+
+- **Transaction validation errors name the conflicting fields** (issue #43
+  feedback), e.g. `from_person_id (63) and from_external ("…") are both set;
+  include at most one of from_person_id, from_business_id, from_external as
+  the giver`. The OpenAPI spec documents the same rules via a machine-readable
+  `x-mutually-exclusive` extension and schema descriptions.
+- **Source maps ship with the production frontend build** (issue #53
+  side-request) so browser consoles show real component names and lines.
+
+## [2.8.0] - 2026-07-06
+
+### ⚠️ CRITICAL — data-loss bug in v2.7.0, upgrade immediately
+
+v2.7.0 introduced Zod validation whose `validate()` middleware strips unknown
+fields from request bodies. Several schemas were missing fields that routes
+actually read, causing **silent data loss**:
+
+- **Editing a person WIPED its `connections`, `osint_data`, `attachments`,
+  and `custom_fields`** — the fields were stripped, and the update writes
+  `field || []`, overwriting stored values with empty. If you edited people
+  while on v2.7.0, that data is gone unless you have a database backup.
+- **Asset holders never saved** — `initial_holder` was stripped before the
+  acquisition transaction could be seeded.
+- **Editing any entity could fail validation** — edit forms send `null` for
+  cleared fields and numeric strings from selects; the schemas rejected both
+  ("Validation failed" on transactions, businesses, assets, properties…).
+- **Marking a todo done and creating a case were rejected** — the status
+  enums didn't match the UI vocabulary (`done`/`cancelled`/`attention` and
+  `active`/`on_hold` were not accepted).
+
+All fixed in this release. To prevent recurrence,
+`backend/middleware/schemaRouteConsistency.test.js` statically checks that
+every body field a route (or its helpers) reads is declared in its schema —
+mutation-tested, runs with `npm test`.
+
+### ✨ Added — OpenAPI specification endpoint (issue #44, phase A)
+
+- **`GET /api/openapi.json`** (authenticated) serves a machine-readable OpenAPI
+  3.1 document describing the full API surface: 54 paths, request-body schemas
+  for every POST/PUT, auth flow, pagination, rate limits, and admin-only markers.
+- Generated at startup from the Zod schemas in `middleware/schemas.js` via
+  Zod 4's native `z.toJSONSchema()` — **zero new dependencies** and no duplicated
+  schema definitions. Validation and documentation share one source of truth.
+- MCP services and other API clients can now discover the schema from the API
+  itself instead of hand-maintaining copies.
+- Corrected: the people list is documented as returning a plain array with
+  pagination headers (`X-Total-Count` / `X-Has-More`), matching actual
+  behaviour (issue #40 backwards compatibility) — not the `{ data, meta }`
+  envelope used by newer list endpoints.
+
+### ✨ Added — Bundled MCP server (issue #44, phase B)
+
+- **New `mcp/` package**: a Model Context Protocol server (`mcp/ghost-mcp.js`)
+  that exposes the entire GHOST API as LLM tools over stdio. Works with Claude
+  Desktop, Claude Code, and any MCP-compatible client — see `mcp/README.md`.
+- **Spec-driven, zero duplication**: tools are generated at startup from the
+  live `GET /api/openapi.json` — 86 tools covering every endpoint, with real
+  request schemas. Upgrading GHOST automatically upgrades the toolset.
+- **Duplicate protection**: `ghost_create_people` / `ghost_create_businesses`
+  check for same-name records first and refuse with a match list unless
+  `ignorePossibleDuplicates: true` — guards against LLMs inserting without
+  searching. Pattern adapted from @zbyte64's original implementation
+  (issue #44), with credit.
+- **Transparent session handling**: logs in with `GHOST_USERNAME` /
+  `GHOST_PASSWORD` env vars and re-authenticates automatically on expiry.
+
+### 🔒 Security
+
+- **Entity network routes were unauthenticated**: `/api/entity-relationships`
+  (GET/POST/DELETE), `/api/relationship-types`, and `/api/entity-network`
+  had no `requireAuth`, exposing the full relationship graph (names,
+  connections, locations) without login. All five routes now require an
+  authenticated session.
+
+### 🐛 Bug Fixes
+
+- **White screen on Add Network form**: `AddNetworkForm` treated
+  `peopleAPI.getAll()`'s `{ data, meta }` envelope as a plain array — same
+  class of crash as issue #47, missed in that fix.
+
+### 🐛 Bug Fixes — validation layer (see CRITICAL section above)
+
+- Schema field primitives rewritten as union types: optional strings accept
+  `null`, numeric fields accept numbers, numeric strings (coerced), `''` and
+  `null`; list fields treat `null` as empty. Range/format checks still apply
+  after coercion; required fields unchanged. Unions keep the generated
+  OpenAPI spec representable (no untyped fields).
+- `initial_holder` declared on asset create; person schemas declare
+  `connections` / `osintData` / `attachments` / `custom_fields`.
+- Case status enum corrected to `active`/`on_hold`/`closed`; todo status enum
+  corrected to `open`/`in_progress`/`on_hold`/`attention`/`done`/`cancelled`.
+- Asset edit form gained "Transfer to New Holder" — records a transfer
+  transaction, consistent with holders being derived from the ledger.
+- 23 new tests: form-shaped payload regressions + the schema↔route
+  consistency guard.
+
+### 🧹 Cleanup
+
+- Removed debug `console.log` of user-creation payloads from the users route.
+- Removed ~90 unused imports/variables and 4 dead helper functions across
+  22 frontend components; added missing `default` cases to two `switch`
+  statements. Frontend now builds with zero `no-unused-vars` warnings.
+
+## [2.7.0] - 2026-07-06
+
+### ✨ Added — Asset, Property & Transaction Tracking (issue #43)
+
+A unified system for recording persistent physical goods (assets), real estate
+(properties), and one-off transactions/benefits that flow between people,
+businesses, and places. Every change of hands or benefit is one row in a single
+`transactions` event log; assets get their chain of custody "for free" from the
+same log.
+
+- **New tables** (created in `backend/server.js` `initializeDatabase()`):
+  `properties`, `assets`, `transactions` — with indexes, `updated_at` triggers,
+  and `ON CONFLICT DO NOTHING` seeds.
+- **New `model_options` taxonomies**, editable in Settings → Data Model:
+  `transaction_type`, `transaction_item_category`, `asset_category`,
+  `asset_status`, `property_type`.
+- **Backend routes** (`requireAuth` + `validateIdParam`, list shape
+  `{ data, meta }`): `routes/properties.js`, `routes/assets.js`,
+  `routes/transactions.js`, `routes/ledger.js`. Convenience sub-routes:
+  `GET /api/people/:id/transactions`, `GET /api/people/:id/assets`,
+  `GET /api/businesses/:id/transactions`, `GET /api/businesses/:id/venue-stats`,
+  `GET /api/properties/:id/transactions`, and the unified entity ledger
+  `GET /api/:entityType/:id/ledger`.
+- **Polymorphic** giver/receiver (person | business | external), subject
+  (free-text item + category | asset | business | property), and event location
+  (business venue | property | free-text + geocode).
+- **Derived (never stored)** current holder / chain of custody for assets, and
+  current owner for businesses & properties (from `sale|purchase|transfer|acquisition`).
+- **Asset location model**: `with_holder` (rides the holder's latest known
+  position), `fixed_known` (live-linked to a person's `people.locations` entry with
+  coordinate snapshot fallback), `fixed_custom` (own geocoded address), `unknown`.
+- **Geocoding** of asset/property/transaction free-text addresses via
+  `improvedGeocodingService`; failures are non-fatal and surface a reason.
+- **Frontend**: new sections (Properties, Assets, Transactions) with list /
+  add-edit / detail components, `DataContext` slices, `assetsAPI`/`propertiesAPI`/
+  `transactionsAPI`/`ledgerAPI`. Detail panels on Person (Gifts & Transactions,
+  Assets Held, Ledger), Business (Venue Activity, Transactions, Ledger), Asset and
+  Property (chain-of-custody timelines).
+- **Entity Ledger** view (`EntityLedger.js`) + exportable "Entity Ledger" report
+  type (markdown / .docx via the existing Report Generator).
+- **Global Map**: property / asset / transaction layers with toggles and
+  type/category filters.
+- **Entity-network graph**: toggleable venue/transaction layer rendering businesses
+  and properties as hubs with edge thickness reflecting event count.
+- **Tests**: `backend/utils/transactionHelpers.test.js` covering party/subject/
+  location resolution, derived custody, geocoding, venue-stats aggregation, ledger
+  role/value-direction derivation, and transaction validation rules.
+
+#### Deferred (Phase 2)
+- Cross-venue ranked "influence" leaderboard and trend analytics.
+- Per-transaction historical coordinates of a moving asset (reconstructable from
+  the holder's `travel_history`).
+- Auto-mutating `owner_person_id` from the custody chain (current owner stays
+  derived for display; the quick field is left untouched).
+- Bulk import.
+
+### 🛡️ Added — Zod schema validation (issue #49)
+
+- **New `backend/middleware/schemas.js`**: 20 Zod schemas covering every entity
+  (people, businesses, tools, cases, todos, travel history, properties, assets,
+  transactions, settings custom-fields and model-options) plus a `validate(schema)`
+  middleware factory wired into all POST/PUT routes.
+- **Structured validation errors**: bad input now returns
+  `{ "error": "Validation failed", "fields": { "email": ["Invalid email"] } }`
+  instead of a generic message — machine-readable field-level feedback (groundwork
+  for OpenAPI/MCP support, issue #44).
+- **Unknown fields stripped** from request bodies before they reach handlers.
+- **Removed** the hand-rolled `validatePersonData` / `validateBusinessData` /
+  `validateToolData` middleware and the dead in-memory rate limiter from
+  `validation.js`.
+
+### ✨ Added — API improvements (PR #45, @zbyte64)
+
+- `GET /api/people/:id` — fetch a single person by ID.
+- `GET /api/businesses/:id` — fetch a single business by ID.
+- **Tunable login rate limiting** via env vars: `LOGIN_RATE_LIMIT_MAX`,
+  `LOGIN_RATE_LIMIT_WINDOW_MS`, `LOGIN_RATE_LIMIT_DISABLE=true` (for automated
+  clients). Default remains 10 attempts / 15 min.
+- Business API 500 responses include an error `detail` in non-production
+  environments to aid debugging (suppressed in production).
+
+### 🔒 Security
+
+- **General API rate limiter**: 300 requests/IP/min applied to all authenticated
+  data-access routes (resolves 20 CodeQL missing-rate-limiting alerts).
+- **Error detail leakage**: raw database error messages are no longer exposed to
+  clients when `NODE_ENV=production`.
+
+### 🐛 Bug Fixes
+
+- **White screen on Wireless Networks / Add Business (issue #47)**:
+  `peopleAPI.getAll()` returns `{ data, meta }` but two components treated the
+  response as a plain array and crashed on `.map()` — fixed by destructuring.
+- **docker-compose overrides `.env` (issue #42)**: `NODE_ENV` was hardcoded to
+  `production` in `docker-compose.yml`, silently overriding `.env`. Both
+  `NODE_ENV` and `FRONTEND_URL` now use `${VAR:-default}` passthrough.
+
+### 🧹 Cleanup
+
+- **Removed dead `backend/config/initDatabase.js`** — never imported; all table
+  creation lives in `initializeDatabase()` in `server.js`. A proper migration
+  system is tracked in issue #48.
+
+## [2.6.0] - 2026-06-14
+
+### 🧹 Cleanup
+
+- **Removed `backend/migrations/` directory**: The three SQL files (`001_create_users_table.sql`, `create_wireless_networks.sql`, `add_network_password_and_associations.sql`) were dead code — `initializeDatabase()` in `backend/server.js` already creates all tables, columns, indexes, and the `fk_audit_logs_user` FK on startup via `CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`.
+- **Why this matters**: On bare-metal installs, users were running the wireless SQL file manually as the `postgres` superuser, which left `wireless_networks` owned by `postgres` instead of the app role and caused `permission denied for table wireless_networks` after a `pg_upgrade` (issue #11). With the migration files gone, there is one source of truth for the schema and no footgun.
+- **README**: Updated bare-metal install steps — no manual `psql` migration step required.
+
 ## [2.5.0] - 2026-05-29
 
 ### ♻️ Refactoring & Architecture

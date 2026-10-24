@@ -1,27 +1,25 @@
 {
   "name": "osint-crm",
-  "version": "2.5.0",
+  "version": "2.19.0",
   "private": true,
   "proxy": "http://localhost:3001",
   "dependencies": {
     "d3": "^7.9.0",
     "docx": "^8.5.0",
     "file-saver": "^2.0.5",
-    "html2canvas": "^1.4.1",
-    "jspdf": "^2.5.1",
-    "jspdf-autotable": "^3.8.1",
+    "i18next": "^23.15.1",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.510.0",
     "papaparse": "^5.5.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-i18next": "15.5.0",
     "react-leaflet": "^4.2.1",
     "react-leaflet-cluster": "^2.1.0",
+    "react-router-dom": "^6.30.4",
     "react-scripts": "5.0.1",
     "react-window": "^1.8.11",
-    "reactflow": "^11.11.4",
-    "recharts": "^2.12.0",
-    "web-vitals": "^2.1.4"
+    "reactflow": "^11.11.4"
   },
   "scripts": {
     "start": "react-scripts start",

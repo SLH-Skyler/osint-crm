@@ -4,13 +4,25 @@
 ![Status](https://img.shields.io/badge/status-actively%20maintained-brightgreen?style=flat-square)
 ![Feedback](https://img.shields.io/badge/feedback-highly%20welcome-4A90D9?style=flat-square)
 ![Feature Requests](https://img.shields.io/badge/feature%20requests-welcome-4A90D9?style=flat-square)
-![Version](https://img.shields.io/badge/version-2.5.0-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-2.19.0-informational?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Node.js%20%7C%20React%20%7C%20PostgreSQL-555?style=flat-square)
 ![License](https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-E08A4A?style=flat-square)
 
 > *"Because Excel sheets are for accountants, not investigators"*
 
-A full-stack OSINT investigation management system built for serious intelligence gathering with a modern, professional interface.
+A full-stack, self-hosted OSINT investigation management system with a modern interface — built for individual investigators, researchers, and hobbyists who want structured case management without spreadsheets. See [Project Status](#-project-status) below for maintenance posture and intended use.
+
+## 📌 Project Status
+
+**Actively maintained, single-maintainer, self-hosted hobby/research project.** Not a commercial product.
+
+- **Maintenance:** Actively maintained by one author. Security reports and bug reports are triaged on a best-effort basis — typically within days, not hours. There is no SLA, no on-call rotation, and no paid support tier.
+- **Intended audience:** Individual investigators, researchers, students, and hobbyists self-hosting on infrastructure they control. The "investigation CRM" framing describes the *feature set*, not a claim of enterprise-grade operational guarantees.
+- **Production deployments:** Possible, but you are the operator. You are responsible for HTTPS termination, backups, network isolation, OS patching, threat modelling for your data, and meeting any regulatory obligations that apply to the data you store. See [SECURITY.md](SECURITY.md) for the current hardening posture and known limitations.
+- **Not suitable for:** Multi-tenant SaaS, regulated environments without your own additional controls (HIPAA, GDPR-regulated PII at scale, law-enforcement evidentiary chains), or any deployment where loss of availability or data integrity has third-party consequences without your own redundancy and review.
+- **Reporting issues:** Open a GitHub issue. For security-sensitive reports, follow the disclosure process in [SECURITY.md](SECURITY.md).
+
+If this project is ever shelved, this section will be updated and the repository will be archived.
 
 ## 🎯 Core Features
 
@@ -64,8 +76,42 @@ A full-stack OSINT investigation management system built for serious intelligenc
 - **Status tracking**: Pending, In Progress, Completed
 - **Case assignment**: Organize tasks by investigation
 
+### 🗂️ Projects — Data Isolation & Access Control
+- **Projects are the hard isolation boundary**: every person, business, asset, transaction, wireless network, and relationship belongs to exactly one project — separate investigations don't bleed into each other, including in the geocoding cache
+- **Cases nest inside a project**: a lighter grouping for different angles or hypotheses within the same investigation
+- **Cross-project linking**: off by default, an opt-in per-project setting for the rare case where the same person legitimately resurfaces in an unrelated story — linked entities stay owned by their home project and show a "from Project X" badge
+- **Per-project roles**: Administrators see and manage every project; each other user is added to specific projects as an **Owner**, **Manager** or **Investigator** — see [Roles & Permissions](#-roles--permissions) below. Enforced on the backend, not just the UI
+- **First-run project gate**: a fresh install or a newly-added user is walked into picking or creating a project before anything else is usable
+
+### 👥 Roles & Permissions
+
+Every account is either an **Administrator** or a regular **User**. Users only
+see projects they've been added to, and hold one role per project:
+
+```
+Administrator   every project, every setting; the only one who appoints owners
+  └─ Owner      per project: manages managers and investigators
+      └─ Manager       per project: edits project settings, manages investigators
+          └─ Investigator  per project: works with the project's data
+```
+
+| | Admin | Owner | Manager | Investigator |
+|---|:---:|:---:|:---:|:---:|
+| Read and write project data | ✅ | ✅ | ✅ | ✅ |
+| Edit project settings | ✅ | ✅ | ✅ | — |
+| Add / remove investigators | ✅ | ✅ | ✅ | — |
+| Add / promote / demote / remove managers | ✅ | ✅ | — | — |
+| Appoint, change or remove owners | ✅ | — | — | — |
+| Create or delete projects | ✅ | — | — | — |
+| Users, audit logs, export/import, system settings | ✅ | — | — | — |
+
+Roles are per project, so the same person can own one project, manage
+another, investigate in a third and not see a fourth at all. Nobody but an
+administrator can change their own membership. Full details in
+[USER_MANAGEMENT.md](USER_MANAGEMENT.md#roles-and-hierarchy).
+
 ### 📊 Case Management
-- **Multi-case support**: Manage multiple investigations
+- **Multi-case support**: Manage multiple investigations within a project
 - **Status tracking**: Custom case statuses and data types
 - **Case-person linking**: Associate people with cases
 - **Timeline tracking**: Investigation chronology
@@ -73,9 +119,35 @@ A full-stack OSINT investigation management system built for serious intelligenc
 
 ### 🏢 Business Intelligence
 - **Business tracking**: Companies and organizations
-- **Employee mapping**: Track personnel
+- **Employee mapping**: Track personnel, with board members/decision-makers distinguished from regular employees
+- **Ownership chains**: a business can be owned by another business, not just a person — represents holding/shell structures
 - **Business relationships**: Link to people and other businesses
 - **Address and contact management**: Full business profiles
+
+### 🪙 Crypto Wallet Tracking
+- **Wallet entities**: address, network/chain, label, and free-form tags (suspicious, exchange, mixer, scam…)
+- **Manual transaction log**: wallet-to-wallet transfers with hash, amount, and timestamp — entered by hand, no live chain API calls
+- **Relationships**: wallet↔wallet, wallet↔person, and wallet↔business links, visible in the same relationship graph as everything else
+- **External reference field**: link out to GraphSense, a block explorer, or any other specialized analysis tool — GHOST tracks the citation and the connections, not the on-chain analysis itself
+
+### 💸 Asset, Property & Transaction Tracking
+- **Assets**: Persistent physical goods (vehicles, devices, jewellery…) with categories, value, and status
+- **Properties**: Real estate with type, address, and geocoded map position
+- **Transactions**: One event log for every gift, sale, purchase, transfer, or benefit between people, businesses, and external parties
+- **Chain of custody**: An asset's current holder and full custody history are derived from the transaction ledger — never stored, never stale
+- **Entity Ledger**: Unified per-person / per-business / per-property ledger view, exportable as a report (markdown / .docx)
+- **Venue analytics**: See which businesses host the most activity
+- **Map & graph layers**: Properties, assets, and transactions appear as toggleable layers on the Global Map and the entity network graph
+- **Configurable taxonomies**: Transaction types, item categories, asset categories/statuses, and property types are editable in Settings → Data Model
+
+### 🤖 API, OpenAPI & MCP Server
+- **OpenAPI 3.1 spec**: `GET /api/openapi.json` (authenticated) serves a machine-readable description of the full API — 78 paths, request schemas, auth flow, pagination, rate limits. Tests run in CI fail when a route, its query parameters or its admin requirement drift from the spec
+- **Interactive API reference**: `/api/docs` on your own instance (signed-in users) — Swagger UI over the same spec, with "Try it out" running under your own account's permissions. Disable with `API_DOCS_ENABLED=false`
+- **Public API catalogue**: the latest release's spec, read-only, at [elm1nst3r.github.io/GHOST-osint-crm](https://elm1nst3r.github.io/GHOST-osint-crm/) — each endpoint shows the MCP tool it becomes
+- **Single source of truth**: The spec is generated at startup from the same Zod schemas that validate requests — documentation can't drift from behaviour
+- **Bundled MCP server**: `mcp/ghost-mcp.js` exposes the GHOST API as ~100 Model Context Protocol tools over stdio — works with Claude Desktop, Claude Code, and any MCP client (see [mcp/README.md](mcp/README.md))
+- **Duplicate protection**: MCP create tools check for same-name records first and refuse with a match list unless explicitly overridden
+- **Schema validation everywhere**: All POST/PUT routes validate bodies against Zod schemas and return structured field-level errors
 
 ### 🌓 Modern UI/UX
 - **Solid backgrounds**: Professional, readable interface with proper contrast
@@ -98,9 +170,17 @@ cd GHOST-osint-crm
 # Generate .env with secure random credentials
 printf "DB_PASSWORD=$(openssl rand -base64 24)\nSESSION_SECRET=$(openssl rand -base64 32)\nDB_USER=postgres\nDB_NAME=osint_crm_db\nDB_HOST=db\nDB_PORT=5432\nNODE_ENV=development\nPORT=3001\nFRONTEND_URL=http://localhost:8080\n" > .env
 
-# Start all services
-docker compose up --build -d
+# Start all services (pulls prebuilt images — no local build needed)
+docker compose pull
+docker compose up -d
 ```
+
+> Building from source instead? Use `docker compose up --build -d`. That
+> compiles both images locally and takes considerably longer.
+>
+> **ARM machines (Apple Silicon, Raspberry Pi):** the prebuilt images are
+> published for `amd64` only, so `docker compose pull` fails with
+> `no matching manifest for linux/arm64`. Build from source instead.
 
 **Create your first admin user:**
 ```bash
@@ -116,7 +196,61 @@ Password must be at least 12 characters. Common weak passwords are rejected.
 **Access the application:**
 - Frontend: http://localhost:8080
 - Backend API: http://localhost:3001
+- API reference: http://localhost:8080/api/docs (once signed in)
 - Health Check: http://localhost:3001/api/health
+
+After signing in, GHOST asks you to pick or create a **project** — every
+record belongs to one.
+
+**Using an external PostgreSQL server instead of the bundled container?**
+Set `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` in `.env` to point
+at it, and add this line to `.env`:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker-compose.external-db.yml
+```
+
+That keeps the bundled `db` container from starting — you're then
+responsible for that server's backups and monitoring yourself.
+GHOST still runs its own migrations against it at startup.
+
+## 🔄 Updating
+
+GHOST tells you when a new version is released — the server checks the public
+release list and shows a banner. Nothing is downloaded or installed
+automatically; updating is always your decision.
+
+```bash
+git pull                      # picks up docker-compose.yml changes
+docker compose pull           # fetch the new images
+docker compose up -d          # restart onto them
+```
+
+If you build from source (required on ARM), replace the last two lines with
+`docker compose up --build -d`.
+
+Database migrations run automatically at startup, so there's no separate
+schema step. Your data lives in a Docker volume and is not touched.
+
+**Coming from 2.17.0–2.18.x with your own PostgreSQL server?** Those
+versions skipped the bundled database when `COMPOSE_PROFILES` was cleared;
+that no longer works. Add
+`COMPOSE_FILE=docker-compose.yml:docker-compose.external-db.yml` to `.env`
+instead (see [Quick Start](#-quick-start-docker)). A leftover
+`COMPOSE_PROFILES=local-db` line is harmless and can stay.
+
+**Pin a specific version** by setting `GHOST_VERSION` in `.env`:
+
+```bash
+GHOST_VERSION=2.19.0
+```
+
+Without it, the containers track the latest release.
+
+**Turning off the update check.** It's on by default so you hear about fixes,
+but it can be switched off completely in **Settings → General → Updates**. When
+disabled, GHOST makes no outbound connection for it at all — relevant if you
+run an isolated or air-gapped instance.
 
 ## 📋 Prerequisites
 
@@ -143,21 +277,30 @@ npm install
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your database credentials
+# Edit .env: set DB_PASSWORD and SESSION_SECRET (both required)
 
-# Start server
+# Start server — the backend reads its settings from the environment and
+# does not load .env by itself, so export the file into the shell first
+set -a; . ./.env; set +a
 npm start
 ```
 Backend runs on `http://localhost:3001`
+
+Run the tests with `npm test` (no database needed).
 
 ### Database
 ```bash
 # Create database
 createdb osint_crm_db
-
-# Run migrations (from backend directory)
-psql -U postgres -d osint_crm_db < migrations/create_wireless_networks.sql
 ```
+
+The schema is managed with [Knex](https://knexjs.org) migrations
+(`backend/migrations/`) which the backend runs automatically on startup —
+no manual steps. Existing pre-2.9 databases are adopted seamlessly: the
+baseline migration is idempotent and simply records itself. To run migrations
+by hand: `cd backend && npx knex migrate:latest`.
+Make sure the DB role configured in `.env` owns the database (or the
+`public` schema), otherwise table creation will fail with a permissions error.
 
 ## 📁 Project Structure
 
@@ -173,18 +316,23 @@ GHOST-osint-crm/
 │   │   │   ├── settings/        # SettingsPage tabs
 │   │   │   ├── visualization/   # Graphs and diagrams
 │   │   │   └── wireless/        # WirelessNetworkDetail panels
-│   │   ├── contexts/            # AuthContext, DataContext, UIContext
+│   │   ├── contexts/            # AuthContext, DataContext, ProjectContext, UIContext
+│   │   ├── locales/             # Translation catalogs (en + Crowdin-managed languages)
 │   │   └── utils/               # API layer, report generators, constants
 │   ├── public/                  # Static assets
 │   └── nginx.conf               # Nginx (no-cache on index.html, immutable JS/CSS)
 ├── backend/                     # Node.js/Express API
-│   ├── server.js                # App entry point (~1,000 lines)
-│   ├── routes/                  # 11 route modules (people, cases, locations…)
-│   ├── middleware/              # Auth, audit, rate limiters, validation
-│   ├── services/                # Geocoding services
-│   ├── utils/                   # Password policy, session revocation
-│   ├── migrations/              # Database migrations
+│   ├── server.js                # App entry point
+│   ├── routes/                  # 22 route modules (people, cases, projects, crypto wallets, assets, transactions, API docs…)
+│   ├── middleware/              # Auth, audit, rate limiters, Zod schemas & validation
+│   ├── migrations/              # Knex schema migrations, applied automatically at startup
+│   ├── services/                # Geocoding providers, update check, archived-project retention
+│   ├── utils/                   # OpenAPI spec, password policy, session revocation, project access control
+│   ├── scripts/                 # Admin user creation, password reset, API catalogue build
 │   └── public/uploads/          # File uploads
+├── mcp/                         # Bundled MCP server (~100 tools from the OpenAPI spec)
+├── .github/workflows/           # CI: backend tests, image publishing, API catalogue
+├── crowdin.yml                  # Translation sync configuration
 ├── docker-compose.yml           # Docker configuration
 └── .env.example                 # Environment template
 ```
@@ -192,12 +340,13 @@ GHOST-osint-crm/
 ## 🎮 Usage Guide
 
 ### Starting a New Investigation
-1. **Create a case** in the Cases section
-2. **Add people** with all relevant details
-3. **Map connections** in Entity Network view
-4. **Track locations** on the Global Map
-5. **Import wireless networks** (if using WiGLE data)
-6. **Assign tasks** to track investigation progress
+1. **Select or create a project** — the top-bar project selector; a fresh install or a newly-added user is prompted for this before anything else is usable. Working as a team? An admin adds an **owner** from the project's member list, and the owner brings in managers and investigators (see [Roles & Permissions](#-roles--permissions))
+2. **Create a case** in the Cases section (optional — a lighter grouping inside the project, for different angles on the same investigation)
+3. **Add people** with all relevant details
+4. **Map connections** in Entity Network view
+5. **Track locations** on the Global Map
+6. **Import wireless networks** (if using WiGLE data)
+7. **Assign tasks** to track investigation progress
 
 ### Wireless Network Intelligence
 **Manual Entry:**
@@ -260,13 +409,17 @@ GHOST-osint-crm/
 - 🔒 **Password policy enforced** — all password-setting routes require ≥12 characters, mixed case, digit, and reject common passwords
 - 🔒 **Session fixation protection** — session ID is regenerated on every successful login
 - 🔒 **Session revocation** — changing a user's role, deactivating, deleting, or resetting their password immediately invalidates their active sessions
-- 🔒 **Rate limiting** — login endpoint limited to 10 attempts/15 min per IP+username; geocoding endpoints limited to 60 req/min per IP. Note: in-process limiter — for multi-instance deployments configure a shared store (Redis/pg) in `backend/middleware/rateLimiters.js`
+- 🔒 **Per-project access control** — non-admin users only see and can act on projects they've been added to, enforced on every project-scoped API route (not just filtered in the UI); membership changes are rank-checked (owner > manager > investigator), only admins appoint owners, and nobody but an admin can change their own membership — see [Roles & Permissions](#-roles--permissions)
+- 🔒 **Rate limiting** — login endpoint limited to 10 attempts/15 min per IP+username (tunable via `LOGIN_RATE_LIMIT_MAX` / `LOGIN_RATE_LIMIT_WINDOW_MS` / `LOGIN_RATE_LIMIT_DISABLE`); geocoding endpoints limited to 60 req/min per IP; all authenticated data routes limited to 300 req/min per IP. Note: in-process limiter — for multi-instance deployments configure a shared store (Redis/pg) in `backend/middleware/rateLimiters.js`
+- 🔒 **Request body validation** — every POST/PUT route validates against a Zod schema; unknown fields are stripped and errors are returned per-field
+- 🔒 **Error detail suppression** — raw database error messages are not exposed to clients when `NODE_ENV=production`
+- 🔒 **API reference is for signed-in users only** — `/api/docs` shows a sign-in notice to anyone without a session, and requests made from it run with the caller's own role and project memberships. Set `API_DOCS_ENABLED=false` to remove the page
 - 🔒 **Geocoding endpoints require authentication** — `/api/geocode/suggestions`, `/api/geocode/address`, and `/api/geocode/stats` reject unauthenticated requests
 - 🔒 **KML upload size-limited** — defaults to 5 MB; override with `KML_MAX_BYTES` env var (in bytes)
 - 🔒 **PostgreSQL is not exposed to the host network** by default — only available within the Docker network
-- 🔒 **Session cookies use `SameSite=Strict` and `HttpOnly`** — enable `secure: true` by setting `NODE_ENV=production`
+- 🔒 **Session cookies use `SameSite=Strict` and `HttpOnly`** — and become `Secure` automatically when `NODE_ENV=production`
+- ⚠️ **HTTPS is required in production** — because the session cookie is `Secure` when `NODE_ENV=production`, it is **only sent over HTTPS**. If you run production mode over plain HTTP, the browser silently drops the cookie: login returns `200` but no session is established and every protected route reports "Authentication required". Terminate TLS at a reverse proxy / load balancer in front of the container (Caddy, Traefik, nginx-proxy, or a cloud LB). For an HTTP-only internal/test box, run with `NODE_ENV` set to something other than `production` so the cookie is not marked `Secure`.
 - 🔒 **Never commit `.env` files** — contains sensitive credentials
-- 🔒 **Use HTTPS in production** — configure a reverse proxy with SSL/TLS
 - 🔒 **Keep `backend/public/uploads/` out of version control** — user-generated content
 - 🔒 **Follow local laws for data collection** — comply with privacy regulations
 
@@ -279,6 +432,14 @@ Contributions welcome! Please:
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
 4. Push to branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+The backend test suite (`cd backend && npm test`) runs on every push and pull
+request. If you add or change an API route, add it to
+`backend/utils/openapiSpec.js` as well — the tests fail when a route, its
+query parameters or its admin requirement are missing from the spec.
+
+Translations are managed on [Crowdin](https://crowdin.com/project/ghost-osint-crm),
+not through pull requests.
 
 ## 📜 License
 
@@ -330,6 +491,37 @@ DB_PASSWORD=<strong-password-not-changeme>
 SESSION_SECRET=<32+-character-secret>
 FRONTEND_URL=http://localhost:8080
 ```
+
+### Issue: Login succeeds but I stay logged out (no session cookie)
+Symptom: `POST /api/auth/login` returns `200` with user data, but the browser stores no cookie, `/api/auth/session` returns `{ "authenticated": false }`, and all protected routes return "Authentication required".
+
+Cause: when `NODE_ENV=production` the session cookie is marked `Secure`, so it is **only sent over HTTPS**. Running production mode over plain HTTP makes the browser silently discard the cookie — the server never even emits `Set-Cookie`.
+
+Fix:
+- **Production:** serve the app over HTTPS (terminate TLS at a reverse proxy / load balancer in front of the container). No code change required.
+- **Local / internal HTTP-only testing:** run with `NODE_ENV` set to something other than `production` (set `NODE_ENV=development` in `.env`) so the cookie is not marked `Secure`.
+
+### Issue: `no matching manifest for linux/arm64` on `docker compose pull`
+The prebuilt images are `amd64` only. On Apple Silicon or other ARM hosts,
+build locally instead:
+```bash
+docker compose up --build -d
+```
+
+### Issue: Backend unhealthy — "The migration directory is corrupt"
+The backend image is older than the database: the database has migrations
+applied that this image doesn't know about. This happens when an update
+didn't actually replace the image (for example a failed `docker compose
+pull`). Get the current image and restart:
+```bash
+docker compose pull && docker compose up -d      # amd64
+docker compose up --build -d                     # ARM / building from source
+```
+Your data is not affected.
+
+### Issue: `/api/docs` loads as a blank page
+Fixed in v2.18.1 — update. If you run your own reverse proxy in front of an
+older version, it is routing `*.js` / `*.css` requests away from the backend.
 
 ### Issue: Permission denied errors in Docker
 The backend now runs as non-root user (nodejs:1001). Ensure upload directories have correct permissions:
@@ -383,29 +575,155 @@ Feedback, inputs, and suggestions are highly welcome! Please open an issue or re
 ## 🛠️ Tech Stack
 
 **Frontend:**
-- React 18 with Context API
+- React 18 with Context API, React Router
 - Tailwind CSS (dark mode)
+- react-i18next (translations, synced with Crowdin)
 - Leaflet + react-leaflet-cluster (maps)
-- ReactFlow (diagrams)
+- ReactFlow and D3 (diagrams, entity graph)
 - react-window (virtualised lists)
 - docx + file-saver (report export)
+- papaparse (CSV parsing)
 - Lucide Icons
 
 **Backend:**
 - Node.js / Express 5
 - PostgreSQL 15
+- Knex (schema migrations)
+- Zod (request validation + OpenAPI generation)
 - xml2js (KML parsing)
-- papaparse (CSV parsing)
-- express-rate-limit (login & geocoding throttling)
+- express-rate-limit (login, geocoding & general API throttling)
 - Jest (tests)
+
+**Integrations:**
+- OpenAPI 3.1 spec at `/api/openapi.json`, browsable with Swagger UI at `/api/docs`
+- MCP server (`mcp/`) via `@modelcontextprotocol/sdk`
 
 **Infrastructure:**
 - Docker & Docker Compose
 - Nginx (reverse proxy, immutable asset caching)
+- GitHub Actions (backend tests, image publishing to GHCR, API catalogue on GitHub Pages)
 
 ---
 
 ## 📋 Recent Changes
+
+### Version 2.19.0 (October 2026)
+- 👥 **Project Owner role** — projects now have Owner > Manager > Investigator, all per project; owners manage managers and investigators, and only an admin appoints or removes owners (issue #95)
+- 🔒 **Rank-based membership rules** — owners and managers can only act on members ranked below them, and nobody but an admin can change their own membership
+- 📝 **Roles documented** — new [Roles & Permissions](#-roles--permissions) section and a full permission table in USER_MANAGEMENT.md
+
+### Version 2.18.4 (October 2026)
+- 🔒 **Project managers can only manage investigators** — they can no longer assign, change or remove managers, or change their own membership; that is now admin-only (issue #95)
+
+### Version 2.18.3 (October 2026)
+- 🐛 **Upgrading from 2.16 or earlier works again** — the bundled PostgreSQL container sat behind an opt-in Compose profile that older `.env` files didn't have, so the database never started and the backend reported unhealthy; it starts by default again (issue #94)
+- 🐘 **External PostgreSQL is now the opt-in** — add `COMPOSE_FILE=docker-compose.yml:docker-compose.external-db.yml` to `.env`; if you cleared `COMPOSE_PROFILES` on 2.17/2.18 for this, add that line
+- 🩺 **Clearer startup error** — when the backend can't reach the database it names the host and port it tried and what to check
+
+### Version 2.18.2 (October 2026)
+- 🐛 **App icons fixed** — the browser tab had no icon and the home-screen icons were broken (mis-named logo files, empty favicon)
+- 📝 **Documentation brought up to date** — setup on ARM hosts, running without Docker, project roles, security posture; QUICK-START's `.env` command no longer leaves the database unstarted
+- 🧹 **Dead code removed** — five unused frontend packages and unused backend leftovers, with no change in behaviour
+
+### Version 2.18.1 (October 2026)
+- 🐛 **`/api/docs` no longer renders blank behind the bundled nginx** — its script and stylesheet were being routed to the frontend's static files instead of the backend
+- 🐛 **Advanced search through the MCP server actually searches** — the spec documented a parameter the endpoint never read, so the tool returned every person in scope; filters across audit logs, assets, transactions, locations and the ledger are now documented and usable too
+
+### Version 2.18.0 (October 2026)
+- 📖 **Interactive API reference at `/api/docs`** — Swagger UI inside your instance for signed-in users, with "Try it out" running under your own account's permissions; a read-only copy for the latest release is published at [elm1nst3r.github.io/GHOST-osint-crm](https://elm1nst3r.github.io/GHOST-osint-crm/) (issue #93)
+- 🧾 **The OpenAPI spec now covers the whole API** — about 30 endpoints were missing, including all of crypto wallets, project membership and import/export; a test now catches a route added without documenting it
+- 🤖 **MCP server v1.2** — 12 new tools (crypto wallets, project members, single-address geocode, nearby wireless networks, user directory) and a `project_id` filter on every project-scoped list; update `mcp/` together with GHOST
+
+### Version 2.17.0 (September 2026)
+- 🌍 **Five new community-translated languages** — French, German, Spanish, Chinese (Simplified) and Russian are now selectable in Settings → General, via Crowdin (issue #59)
+- ⚙️ **Server-side global application settings** — app name, logo, default language and default theme mode now live in the database instead of the browser, admin-configured and shared across every user/device; each user can still override language/theme for their own account (issue #91)
+- 🐘 **External PostgreSQL server support** — the bundled Postgres container is now opt-out (`COMPOSE_PROFILES`), and `DB_HOST`/`DB_PORT` no longer get silently overridden by `docker-compose.yml`, so GHOST can point at your own PostgreSQL server without hand-editing compose files (issue #75)
+
+### Version 2.16.0 (August 2026)
+- 🗑️ **Delete a project and all its data in one step** — the delete action now shows exactly what will be destroyed (people, organizations, relationships, cases, assets, transactions, wallets, …) and removes it all in one transaction, instead of refusing until every entity was hand-deleted; requires typing the project name to confirm (issue #88)
+- ⏳ **Archived-project retention policy** — optionally auto-delete projects left in "Closed" status past a chosen window (30/90/180/365 days) via a daily background sweep; off by default (issue #88)
+
+### Version 2.15.0 (August 2026)
+- 🗂️ **Project-based data isolation** — a Project is now a hard wall around an investigation (people, orgs, locations, assets, transactions, wallets, relationships all scoped to it); Cases become an optional grouping inside a project; cross-project linking is opt-in per project; existing data migrates to a "Default Project" (issue #83)
+- 👥 **Per-project membership and roles** — each user is a `manager` or `investigator` on a given project; non-admins only see and can reach projects they're a member of, enforced server-side (issue #84)
+- 🪙 **Cryptocurrency wallet entities** — wallets (address, network, tags, external-reference URL), manual transactions and wallet relationships in the investigation graph; GHOST holds the entities and citations, specialist tools do the chain analysis (issue #82)
+- 🐛 **Project-members dialog no longer clipped to the sidebar; person/business audit entries show the actual user instead of "System"; dark-mode inputs no longer render white** (issues #84, #87)
+- 🐛 **Person-card locations keep their type/city/state/country/notes; Advanced Search closes on mobile** (issues #62, #64)
+
+### Version 2.14.2 (August 2026)
+- 🐛 **Fresh installs no longer crash-loop** — a migration introduced in 2.13.0 ran against `geocoding_cache` before that table existed on a virgin database; it's now a no-op when the table isn't there yet (issue #81)
+
+### Version 2.14.1 (August 2026)
+- 🐛 **Geocoding errors report what the provider actually said** — a rejected API key produced a generic message instead of the provider's own explanation, making a real setup problem impossible to diagnose
+- 🌍 **Russian translation is complete** — every interface string including report output, via Crowdin
+
+### Version 2.14.0 (August 2026)
+- 🧰 **Bulk import for OSINT tools** — paste or upload a CSV/TSV/JSON tool list, with a preview showing what will be added, what already exists and which rows have problems; also available to the MCP tools
+- 🗺️ **LocationIQ geocoding provider** — a third option alongside OpenStreetMap and Yandex, with a free tier that needs no payment details; providers now each keep their own API key and request queue
+- 🐛 **A Yandex API key set in 2.13.0 survives the upgrade** — keys are namespaced per provider, and the old one is migrated rather than dropped
+
+### Version 2.13.0 (August 2026)
+- 🔄 **Update notifications and prebuilt images** — GHOST tells you when a release is out (server-side check, on by default, fully switchable off), and images are published to GHCR so updating is `docker compose pull && docker compose up -d` instead of a local rebuild
+- 🗺️ **Yandex geocoding option** — selectable in Settings with your own API key, for the Russian addresses OpenStreetMap handles poorly; the address cache is now kept per provider (issue #62)
+- 🐛 **Report configuration actually works** — the section checkboxes did nothing for most report types, report scope wasn't selectable, and OSINT data never appeared in any report despite the switch being on (issue #77)
+- 🐛 **Mobile fixes from real-device testing** — case cards and person cards no longer overflow, and the person detail window can be closed again (issue #64)
+- 🐛 **Advanced Search finds people by patronymic** (issue #78), the layout selector updates correctly (issue #76), and the dashboard graph shows Fullscreen instead of a dead Close button (issue #79)
+
+### Version 2.12.0 (August 2026)
+- 🐛 **Data Model options now reach the person dropdowns** — categories and statuses rendered from a hardcoded list rather than from Settings → Data Model, so options you added never appeared anywhere (issue #67)
+- 🐛 **"Export All Data" is complete** — assets, transactions, properties and wireless networks were missing from the export, making it unusable for backup or migration; import restores them with references intact (issue #74)
+- 🌍 **Reports are translatable** — the generated .md/.docx reports and entity ledger were the last content hardcoded in English; 127 new strings, and report dates follow the report's language (issue #63)
+- 👤 **Name order follows the language** — Russian and neighbouring conventions lead with the family name (issue #61)
+- 🕸️ **Conflict-of-interest groundwork** — board members distinct from employees, employee entries linked to real person records, business-to-business ownership chains, taggable transactions, and six toggleable relationship layers in the entity network (issue #65)
+
+### Version 2.11.0 (August 2026)
+- 🌍 **Data-model labels translate** — the option labels behind every dropdown (categories, statuses, connection/location/transaction/asset types) now render in the selected language; they were previously stuck in English because they are seeded into the database rather than living in the translation catalog. Labels you rename or create yourself are left exactly as you wrote them (issue #67)
+- 👤 **Patronymic field on people** — a proper name part shown between given and family name and searchable on its own, for Russian and other conventions that use one (issue #61)
+- 📄 **Person reports scope to the person** — a report generated from someone now covers that person rather than everyone in their case, and opens on the Person Profile type; the Word export also gained its missing connections section (issue #63)
+- 📱 **Mobile: navigation and forms** — the sidebar becomes an off-canvas drawer on phones, forms stack, and dialogs stay on screen; tables, map and relationship graph are still desktop-oriented (issue #64, stages 1–2)
+- 🐛 **Advanced Search filters fixed** — the CRM-status, location-type and connection-type filters rendered blank labels and filtered on `undefined`
+
+### Version 2.10.0 (July 2026)
+- 🌍 **Community translations** — the entire frontend now runs through react-i18next (~1,380 strings) with a Crowdin integration for community-contributed languages and a language picker in Settings (issue #59)
+- 🎨 **Appearance & theming** — new Appearance settings tab for theme mode, accent color, density and surface style, backed by a runtime design-token system; quieter, accent-driven visual language
+- 🕸️ **Entity Network: employer/employee edges** — a business's employees are matched to people by name and drawn as employer→employee edges, with the employer ranked at the top in hierarchical layout
+- 🐛 **Adding a holder to an asset works** — `initial_holder` was silently stripped by validation on create, and the holder picker was missing from the edit form (now "Transfer to New Holder")
+- 🐛 **Tools list refreshes after save** — a created/edited tool now appears without a reload; removed dead unthrottled geocoding code that bypassed the Nominatim queue
+
+### Version 2.9.1 (July 2026)
+- 🐛 **Non-admin users can use the app again** — startup requests to admin-only endpoints no longer produce a false "System Offline"; custom-field definitions are readable by all authenticated users (issue #58)
+- 🐛 **Geocoding no longer rate-limits itself** — Nominatim calls are queued at 1 req/s with retry-on-429, autocomplete is debounced, and provider rate limiting gets a clear message instead of a raw 429 (issue #57)
+
+### Version 2.9.0 (July 2026)
+- 🔗 **URL routing** — every section has a URL, browser back/forward work, and `/people/:id` / `/businesses/:id` deep-link straight to an entity (issue #52)
+- 🗃️ **Knex schema migrations** — schema now lives in `backend/migrations/` and runs automatically at startup; existing databases are adopted seamlessly by an idempotent baseline (issue #48)
+- 🕸️ **Entity Network: ownership + transaction edges** — businesses connect to their owners, and a toggle draws aggregated giver→receiver edges from the transaction log; per-class edge toggles (issue #50)
+- 🐛 **Entity Network crash-loop fixed** — a person↔business connection could poison the graph data and rate-limit the app into "System Offline"; blocked, guarded, and self-healing on save (issue #56)
+- 🐛 **Business editing fixed** — white-screen on edit (DECIMAL coordinates returned as strings) plus owner/employee display and stale-list bugs (issues #53, #55)
+- 🎨 **Tool tags readable in light theme** (issue #54); **custom location types render on the map** with colors, filter chips and legend entries (issue #51)
+- 🤖 **MCP server v1.1** — respawn cache (cached session + spec make per-call process spawns instant) and duplicate detection for transactions (issues #43, #44)
+- 🛡️ **Sharper validation errors** — mutually-exclusive transaction party violations name the conflicting fields; OpenAPI spec documents the rules machine-readably (issue #43)
+- 🧯 **Section-level error boundary** — a view crash shows an inline retry instead of a white screen; production builds ship source maps
+
+### Version 2.8.0 (July 2026)
+- ⚠️ **Critical fix — upgrade from v2.7.0 immediately**: the Zod validation layer introduced in v2.7.0 silently stripped fields some routes actually read, which could **wipe a person's connections, OSINT data, attachments, and custom fields on edit** and prevented asset holders from ever saving. All schemas corrected; a static schema↔route consistency test now prevents recurrence
+- 🐛 **Validation accepts real form payloads** — `null` for cleared fields, numeric strings from selects, `''` for optional fields; case/todo status enums now match the UI vocabulary
+- 🔒 **Entity network routes locked down** — relationship graph endpoints were missing authentication
+- ✨ **Asset holder transfer** — "Transfer to New Holder" on the asset edit form records a transfer transaction
+- 🧹 **Lint cleanup** — ~90 unused imports/variables removed; frontend builds with zero warnings
+
+### Version 2.7.0 (July 2026)
+- 💸 **Asset, Property & Transaction tracking** — new first-class entities with a unified transaction event log, derived chain of custody, per-entity ledger views, an exportable Entity Ledger report, and map/graph layers (issue #43)
+- 🤖 **OpenAPI 3.1 endpoint** — `GET /api/openapi.json` describes the full API, generated from the Zod validation schemas (issue #44)
+- 🤖 **Bundled MCP server** — `mcp/` package exposes the whole API as ~86 LLM tools for Claude Desktop / Claude Code / any MCP client, generated from the live OpenAPI spec (issue #44, with credit to @zbyte64)
+- 🛡️ **Zod schema validation** — 20 schemas covering every entity, structured field-level validation errors (issue #49)
+- ✨ **API improvements** (PR #45, @zbyte64) — `GET /api/people/:id`, `GET /api/businesses/:id`, tunable login rate limiting via env vars
+- 🔒 **General API rate limiter** — 300 req/IP/min on all authenticated data routes; DB error details suppressed in production
+- 🐛 **White screen on Wireless Networks / Add Business fixed** (issue #47); `NODE_ENV`/`FRONTEND_URL` no longer silently overridden by docker-compose (issue #42)
+
+### Version 2.6.0 (June 2026)
+- 🧹 **Removed dead `backend/migrations/` directory** — schema is created on startup by `initializeDatabase()` in `server.js`; the standalone SQL files were redundant and could leave `wireless_networks` owned by `postgres` on bare-metal installs (issue #11)
+- 📖 **README updated** — bare-metal install no longer instructs running `psql ... < migrations/...sql`
 
 ### Version 2.5.0 (May 2026)
 - ♻️ **Backend refactored** — `server.js` reduced from 3,052 → ~1,000 lines; all route handlers extracted into 11 dedicated modules under `backend/routes/`
@@ -463,5 +781,5 @@ See [CHANGELOG.md](CHANGELOG.md) for complete details.
 
 Built with ❤️ for the OSINT community.
 
-**Version:** 2.5.0
-**Last Updated:** May 29, 2026
+**Version:** 2.19.0
+**Last Updated:** October 10, 2026

@@ -1,17 +1,21 @@
 // File: frontend/src/components/TravelPatternAnalysis.js
 import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker } from 'react-leaflet';
-import { 
-  MapPin, Calendar, Clock, TrendingUp, BarChart2, 
+import { useTranslation } from 'react-i18next';
+import { MapContainer, TileLayer, Popup, Polyline, CircleMarker } from 'react-leaflet';
+import {
+  MapPin, Calendar, Clock, BarChart2,
   Plane, Car, Train, Ship, AlertCircle, Plus,
-  Edit2, Trash2, X, Save, Globe, Activity
+  Edit2, Trash2, Globe, Activity
 } from 'lucide-react';
 import { travelHistoryAPI } from '../utils/api';
 import { TRAVEL_PURPOSES, TRANSPORTATION_MODES } from '../utils/constants';
+import { optionLabel, translateOptions } from '../utils/optionLabels';
 import { OSM_TILE_URL, OSM_ATTRIBUTION } from '../utils/mapConstants';
-import L from 'leaflet';
 
 const TravelPatternAnalysis = ({ personId, personName }) => {
+  const { t } = useTranslation();
+  const travelPurposes = translateOptions(t, 'travel_purpose', TRAVEL_PURPOSES);
+  const transportationModes = translateOptions(t, 'transportation_mode', TRANSPORTATION_MODES);
   const [travelData, setTravelData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -46,7 +50,7 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
       setTravelData(data);
     } catch (err) {
       console.error('Error fetching travel data:', err);
-      setError('Failed to load travel data');
+      setError(t('travelPatternAnalysis.errorLoadTravelData'));
     } finally {
       setLoading(false);
     }
@@ -66,18 +70,18 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
       resetForm();
     } catch (err) {
       console.error('Error saving travel record:', err);
-      alert('Failed to save travel record');
+      alert(t('travelPatternAnalysis.errorSaveTravelRecord'));
     }
   };
 
   const handleDelete = async (travelId) => {
-    if (window.confirm('Are you sure you want to delete this travel record?')) {
+    if (window.confirm(t('travelPatternAnalysis.confirmDeleteTravelRecord'))) {
       try {
         await travelHistoryAPI.delete(travelId);
         fetchTravelData();
       } catch (err) {
         console.error('Error deleting travel record:', err);
-        alert('Failed to delete travel record');
+        alert(t('travelPatternAnalysis.errorDeleteTravelRecord'));
       }
     }
   };
@@ -105,7 +109,7 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
 
   const geocodeAddress = async () => {
     if (!formData.address && !formData.city && !formData.country) {
-      alert('Please enter an address, city, or country to geocode');
+      alert(t('travelPatternAnalysis.errorEnterAddressToGeocode'));
       return;
     }
 
@@ -122,19 +126,21 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
 
       if (response.ok && data.lat) {
         setFormData({ ...formData, latitude: data.lat, longitude: data.lng });
-        alert('Location geocoded successfully!');
+        alert(t('travelPatternAnalysis.geocodeSuccess'));
       } else {
-        let msg = data.message || 'Could not find coordinates for this address.';
+        let msg = data.message || t('travelPatternAnalysis.geocodeNotFoundDefault');
         if (data.reason === 'not_found') {
-          msg += '\n\nTips:\n• Add city and country (e.g. "Paris, France")\n• Check for spelling mistakes';
+          msg += t('travelPatternAnalysis.geocodeNotFoundTips');
         } else if (data.reason === 'timeout') {
-          msg += '\n\nGeocoding timed out — check your connection and try again.';
+          msg += t('travelPatternAnalysis.geocodeTimeoutTip');
+        } else if (data.reason === 'rate_limited') {
+          msg += t('travelPatternAnalysis.geocodeRateLimitedTip');
         }
         alert(msg);
       }
     } catch (err) {
       console.error('Geocoding error:', err);
-      alert('Geocoding service is unavailable. Check your connection.');
+      alert(t('travelPatternAnalysis.geocodeServiceUnavailable'));
     }
   };
 
@@ -152,13 +158,13 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
   };
 
   const getDuration = (arrival, departure) => {
-    if (!arrival || !departure) return 'N/A';
+    if (!arrival || !departure) return t('personDetailModal.notAvailable');
     const days = Math.floor((new Date(departure) - new Date(arrival)) / (1000 * 60 * 60 * 24));
-    return `${days} day${days !== 1 ? 's' : ''}`;
+    return t('travelPatternAnalysis.daysDuration', { count: days });
   };
 
   const formatDate = (date) => {
-    if (!date) return 'N/A';
+    if (!date) return t('personDetailModal.notAvailable');
     return new Date(date).toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
@@ -171,7 +177,7 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600 dark:text-gray-400">Loading travel data...</p>
+          <p className="mt-4 text-gray-600 dark:text-gray-400">{t('travelPatternAnalysis.loadingTravelData')}</p>
         </div>
       </div>
     );
@@ -193,49 +199,49 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
       {/* Header with Navigation */}
       <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">Travel Pattern Analysis</h3>
+          <h3 className="text-lg font-semibold">{t('travelPatternAnalysis.title')}</h3>
           <button
             onClick={() => setShowAddForm(true)}
             className="px-3 py-1 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 flex items-center"
           >
             <Plus className="w-4 h-4 mr-1" />
-            Add Travel Record
+            {t('travelPatternAnalysis.addTravelRecord')}
           </button>
         </div>
-        
+
         <div className="flex space-x-2">
           <button
             onClick={() => setActiveView('timeline')}
             className={`px-4 py-2 rounded-md text-sm ${
-              activeView === 'timeline' 
-                ? 'bg-blue-600 text-white' 
+              activeView === 'timeline'
+                ? 'bg-blue-600 text-white'
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
             <Calendar className="w-4 h-4 inline mr-1" />
-            Timeline
+            {t('travelPatternAnalysis.timelineTab')}
           </button>
           <button
             onClick={() => setActiveView('map')}
             className={`px-4 py-2 rounded-md text-sm ${
-              activeView === 'map' 
-                ? 'bg-blue-600 text-white' 
+              activeView === 'map'
+                ? 'bg-blue-600 text-white'
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
             <Globe className="w-4 h-4 inline mr-1" />
-            Map View
+            {t('travelPatternAnalysis.mapViewTab')}
           </button>
           <button
             onClick={() => setActiveView('statistics')}
             className={`px-4 py-2 rounded-md text-sm ${
-              activeView === 'statistics' 
-                ? 'bg-blue-600 text-white' 
+              activeView === 'statistics'
+                ? 'bg-blue-600 text-white'
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
             <BarChart2 className="w-4 h-4 inline mr-1" />
-            Statistics
+            {t('travelPatternAnalysis.statisticsTab')}
           </button>
         </div>
       </div>
@@ -244,30 +250,30 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
       {(showAddForm || editingTravel) && (
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
           <h4 className="text-lg font-semibold mb-4">
-            {editingTravel ? 'Edit Travel Record' : 'Add Travel Record'}
+            {editingTravel ? t('travelPatternAnalysis.editTravelRecord') : t('travelPatternAnalysis.addTravelRecord')}
           </h4>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Location Name</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">{t('travelPatternAnalysis.locationNameLabel')}</label>
                 <input
                   type="text"
                   value={formData.location_name}
                   onChange={(e) => setFormData({ ...formData, location_name: e.target.value })}
                   className="w-full px-3 py-2 border rounded-md"
-                  placeholder="e.g., Hilton Paris"
+                  placeholder={t('travelPatternAnalysis.locationNamePlaceholder')}
                 />
               </div>
-              
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Purpose</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">{t('travelPatternAnalysis.purposeLabel')}</label>
                 <select
                   value={formData.purpose}
                   onChange={(e) => setFormData({ ...formData, purpose: e.target.value })}
                   className="w-full px-3 py-2 border rounded-md"
                 >
-                  <option value="">Select Purpose</option>
-                  {TRAVEL_PURPOSES.map(purpose => (
+                  <option value="">{t('travelPatternAnalysis.selectPurposePlaceholder')}</option>
+                  {travelPurposes.map(purpose => (
                     <option key={purpose.value} value={purpose.value}>
                       {purpose.label}
                     </option>
@@ -276,9 +282,9 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">City *</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">{t('travelPatternAnalysis.cityLabel')}</label>
                 <input
                   type="text"
                   value={formData.city}
@@ -287,9 +293,9 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
                   required
                 />
               </div>
-              
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">State/Province</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">{t('travelPatternAnalysis.stateProvinceLabel')}</label>
                 <input
                   type="text"
                   value={formData.state}
@@ -297,9 +303,9 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
                   className="w-full px-3 py-2 border rounded-md"
                 />
               </div>
-              
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Country *</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">{t('travelPatternAnalysis.countryLabel')}</label>
                 <input
                   type="text"
                   value={formData.country}
@@ -311,7 +317,7 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Street Address</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">{t('travelPatternAnalysis.streetAddressLabel')}</label>
               <div className="flex space-x-2">
                 <input
                   type="text"
@@ -323,21 +329,21 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
                   type="button"
                   onClick={geocodeAddress}
                   className="px-3 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
-                  title="Get coordinates"
+                  title={t('travelPatternAnalysis.getCoordinatesTitle')}
                 >
                   <MapPin className="w-4 h-4" />
                 </button>
               </div>
               {formData.latitude && formData.longitude && (
                 <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
-                  Coordinates: {formData.latitude.toFixed(6)}, {formData.longitude.toFixed(6)}
+                  {t('travelPatternAnalysis.coordinatesLabel', { lat: formData.latitude.toFixed(6), lon: formData.longitude.toFixed(6) })}
                 </p>
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Arrival Date *</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">{t('travelPatternAnalysis.arrivalDateLabel')}</label>
                 <input
                   type="datetime-local"
                   value={formData.arrival_date}
@@ -346,9 +352,9 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
                   required
                 />
               </div>
-              
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Departure Date</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">{t('travelPatternAnalysis.departureDateLabel')}</label>
                 <input
                   type="datetime-local"
                   value={formData.departure_date}
@@ -359,14 +365,14 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Transportation Mode</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">{t('travelPatternAnalysis.transportationModeLabel')}</label>
               <select
                 value={formData.transportation_mode}
                 onChange={(e) => setFormData({ ...formData, transportation_mode: e.target.value })}
                 className="w-full px-3 py-2 border rounded-md"
               >
-                <option value="">Select Transportation</option>
-                {TRANSPORTATION_MODES.map(mode => (
+                <option value="">{t('travelPatternAnalysis.selectTransportationPlaceholder')}</option>
+                {transportationModes.map(mode => (
                   <option key={mode.value} value={mode.value}>
                     {mode.label}
                   </option>
@@ -375,7 +381,7 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Notes</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">{t('propertyDetailModal.notesLabel')}</label>
               <textarea
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -390,13 +396,13 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
                 onClick={resetForm}
                 className="px-4 py-2 text-gray-700 dark:text-slate-300 bg-gray-100 dark:bg-slate-700 rounded-md hover:bg-gray-200"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 type="submit"
                 className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
               >
-                {editingTravel ? 'Update' : 'Save'} Travel Record
+                {editingTravel ? t('travelPatternAnalysis.updateTravelRecord') : t('travelPatternAnalysis.saveTravelRecord')}
               </button>
             </div>
           </form>
@@ -406,7 +412,7 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
       {/* Content based on active view */}
       {activeView === 'timeline' && (
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
-          <h4 className="text-lg font-semibold mb-4">Travel Timeline</h4>
+          <h4 className="text-lg font-semibold mb-4">{t('travelPatternAnalysis.travelTimeline')}</h4>
           {travelData?.history?.length > 0 ? (
             <div className="space-y-4">
               {travelData.history.map((travel, index) => (
@@ -438,7 +444,7 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
                         </span>
                         {travel.purpose && (
                           <span className="px-2 py-1 bg-gray-100 dark:bg-slate-700 rounded text-xs">
-                            {TRAVEL_PURPOSES.find(p => p.value === travel.purpose)?.label || travel.purpose}
+                            {optionLabel(t, 'travel_purpose', travel.purpose)}
                           </span>
                         )}
                       </div>
@@ -452,9 +458,12 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
                           setEditingTravel(travel);
                           setFormData({
                             ...travel,
-                            arrival_date: travel.arrival_date ? 
+                            // DECIMAL columns arrive as strings — coerce so .toFixed() doesn't crash
+                            latitude: travel.latitude != null ? Number(travel.latitude) : null,
+                            longitude: travel.longitude != null ? Number(travel.longitude) : null,
+                            arrival_date: travel.arrival_date ?
                               new Date(travel.arrival_date).toISOString().slice(0, 16) : '',
-                            departure_date: travel.departure_date ? 
+                            departure_date: travel.departure_date ?
                               new Date(travel.departure_date).toISOString().slice(0, 16) : ''
                           });
                         }}
@@ -474,14 +483,14 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
               ))}
             </div>
           ) : (
-            <p className="text-gray-500 dark:text-slate-400 text-center py-8">No travel history recorded yet.</p>
+            <p className="text-gray-500 dark:text-slate-400 text-center py-8">{t('travelPatternAnalysis.noTravelHistory')}</p>
           )}
         </div>
       )}
 
       {activeView === 'map' && (
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
-          <h4 className="text-lg font-semibold mb-4">Travel Map</h4>
+          <h4 className="text-lg font-semibold mb-4">{t('travelPatternAnalysis.travelMap')}</h4>
           <div className="h-96 rounded-lg overflow-hidden">
             <MapContainer
               center={[20, 0]}
@@ -513,7 +522,7 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
                       </p>
                       {travel.purpose && (
                         <p className="text-xs mt-1">
-                          Purpose: {TRAVEL_PURPOSES.find(p => p.value === travel.purpose)?.label}
+                          {t('travelPatternAnalysis.purposeInline', { purpose: optionLabel(t, 'travel_purpose', travel.purpose) })}
                         </p>
                       )}
                     </div>
@@ -556,7 +565,7 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Countries Visited</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">{t('travelPatternAnalysis.countriesVisited')}</p>
                   <p className="text-2xl font-bold text-blue-600">
                     {travelData.statistics?.countries_visited || 0}
                   </p>
@@ -564,11 +573,11 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
                 <Globe className="w-8 h-8 text-blue-400" />
               </div>
             </div>
-            
+
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Cities Visited</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">{t('travelPatternAnalysis.citiesVisited')}</p>
                   <p className="text-2xl font-bold text-green-600">
                     {travelData.statistics?.cities_visited || 0}
                   </p>
@@ -576,11 +585,11 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
                 <MapPin className="w-8 h-8 text-green-400" />
               </div>
             </div>
-            
+
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Total Trips</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">{t('travelPatternAnalysis.totalTrips')}</p>
                   <p className="text-2xl font-bold text-purple-600">
                     {travelData.statistics?.total_trips || 0}
                   </p>
@@ -588,13 +597,13 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
                 <Activity className="w-8 h-8 text-purple-400" />
               </div>
             </div>
-            
+
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Avg Trip Duration</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">{t('travelPatternAnalysis.avgTripDuration')}</p>
                   <p className="text-2xl font-bold text-orange-600">
-                    {Math.round(travelData.statistics?.avg_trip_duration || 0)} days
+                    {t('travelPatternAnalysis.daysDuration', { count: Math.round(travelData.statistics?.avg_trip_duration || 0) })}
                   </p>
                 </div>
                 <Clock className="w-8 h-8 text-orange-400" />
@@ -604,7 +613,7 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
 
           {/* Most Visited Locations */}
           <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
-            <h4 className="text-lg font-semibold mb-4">Most Visited Locations</h4>
+            <h4 className="text-lg font-semibold mb-4">{t('travelPatternAnalysis.mostVisitedLocations')}</h4>
             {travelData.frequentLocations?.length > 0 ? (
               <div className="space-y-2">
                 {travelData.frequentLocations.map((location, index) => (
@@ -618,30 +627,30 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
                       </div>
                     </div>
                     <div className="text-sm text-gray-600 dark:text-gray-400">
-                      {location.visit_count} visit{location.visit_count > 1 ? 's' : ''}
+                      {t('travelPatternAnalysis.visitCount', { count: location.visit_count })}
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-gray-500 dark:text-slate-400 text-center py-4">No location data available</p>
+              <p className="text-gray-500 dark:text-slate-400 text-center py-4">{t('travelPatternAnalysis.noLocationData')}</p>
             )}
           </div>
 
           {/* Travel by Purpose */}
           <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
-            <h4 className="text-lg font-semibold mb-4">Travel by Purpose</h4>
+            <h4 className="text-lg font-semibold mb-4">{t('travelPatternAnalysis.travelByPurpose')}</h4>
             {travelData.travelByPurpose?.length > 0 ? (
               <div className="space-y-2">
                 {travelData.travelByPurpose.map((purpose, index) => {
-                  const purposeLabel = TRAVEL_PURPOSES.find(p => p.value === purpose.purpose)?.label || purpose.purpose || 'Unknown';
+                  const purposeLabel = optionLabel(t, 'travel_purpose', purpose.purpose) || t('relationshipDiagram.unknown');
                   const percentage = Math.round((purpose.count / travelData.statistics.total_trips) * 100);
-                  
+
                   return (
                     <div key={index} className="space-y-1">
                       <div className="flex justify-between text-sm">
                         <span className="font-medium">{purposeLabel}</span>
-                        <span className="text-gray-600 dark:text-gray-400">{purpose.count} trips ({percentage}%)</span>
+                        <span className="text-gray-600 dark:text-gray-400">{t('travelPatternAnalysis.tripsPercentage', { count: purpose.count, percentage })}</span>
                       </div>
                       <div className="w-full bg-gray-200 dark:bg-slate-600 rounded-full h-2">
                         <div
@@ -654,38 +663,38 @@ const TravelPatternAnalysis = ({ personId, personName }) => {
                 })}
               </div>
             ) : (
-              <p className="text-gray-500 dark:text-slate-400 text-center py-4">No purpose data available</p>
+              <p className="text-gray-500 dark:text-slate-400 text-center py-4">{t('travelPatternAnalysis.noPurposeData')}</p>
             )}
           </div>
 
           {/* Travel Patterns */}
           <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
-            <h4 className="text-lg font-semibold mb-4">Travel Patterns & Insights</h4>
+            <h4 className="text-lg font-semibold mb-4">{t('travelPatternAnalysis.travelPatternsInsights')}</h4>
             <div className="space-y-3">
               {travelData.statistics?.first_trip && (
                 <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
-                  <span className="text-sm font-medium text-blue-900">First Recorded Trip</span>
+                  <span className="text-sm font-medium text-blue-900">{t('travelPatternAnalysis.firstRecordedTrip')}</span>
                   <span className="text-sm text-blue-700">{formatDate(travelData.statistics.first_trip)}</span>
                 </div>
               )}
-              
+
               {travelData.statistics?.last_trip && (
                 <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
-                  <span className="text-sm font-medium text-green-900">Most Recent Trip</span>
+                  <span className="text-sm font-medium text-green-900">{t('travelPatternAnalysis.mostRecentTrip')}</span>
                   <span className="text-sm text-green-700">{formatDate(travelData.statistics.last_trip)}</span>
                 </div>
               )}
-              
+
               {travelData.monthlyFrequency?.length > 0 && (() => {
                 const currentYear = new Date().getFullYear();
                 const thisYearTrips = travelData.monthlyFrequency
                   .filter(m => m.year === currentYear)
                   .reduce((sum, m) => sum + parseInt(m.trips), 0);
-                
+
                 return (
                   <div className="flex items-center justify-between p-3 bg-purple-50 rounded-lg">
-                    <span className="text-sm font-medium text-purple-900">Trips This Year</span>
-                    <span className="text-sm text-purple-700">{thisYearTrips} trips</span>
+                    <span className="text-sm font-medium text-purple-900">{t('travelPatternAnalysis.tripsThisYear')}</span>
+                    <span className="text-sm text-purple-700">{t('travelPatternAnalysis.tripsCount', { count: thisYearTrips })}</span>
                   </div>
                 );
               })()}

@@ -1,9 +1,20 @@
 # File: docker-compose.yml
 # This file defines how Docker should run your multi-container application.
+#
+# Images are published to GHCR on every release, so updating is:
+#
+#     docker compose pull && docker compose up -d
+#
+# — no local build, no toolchain, and it takes seconds. GHOST_VERSION pins a
+# specific release (e.g. GHOST_VERSION=2.12.1); the default tracks `latest`.
+#
+# The `build:` sections are kept so developers and anyone modifying the source
+# can still build locally with `docker compose up -d --build`.
 
 services:
   # Frontend Service (React App served by Nginx)
   frontend:
+    image: ghcr.io/elm1nst3r/ghost-osint-crm-frontend:${GHOST_VERSION:-latest}
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -25,6 +36,7 @@ services:
 
   # Backend Service (Node.js/Express API)
   backend:
+    image: ghcr.io/elm1nst3r/ghost-osint-crm-backend:${GHOST_VERSION:-latest}
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -32,14 +44,16 @@ services:
     ports:
       - "3001:3001"
     environment:
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3001
-      DB_HOST: db
+      DB_HOST: ${DB_HOST:-db}
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME:-osint_crm_db}
-      DB_PORT: 5432
+      DB_PORT: ${DB_PORT:-5432}
       SESSION_SECRET: ${SESSION_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
 
     volumes:
       - ./backend/public:/usr/src/app/public
@@ -47,6 +61,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+        required: false
     networks:
       - osint-crm-network
     healthcheck:
@@ -58,6 +73,16 @@ services:
       start_period: 40s
 
   # Database Service (PostgreSQL)
+  #
+  # Pointing GHOST at your own PostgreSQL server instead? Set DB_HOST/DB_PORT
+  # (and DB_USER/DB_PASSWORD/DB_NAME) in .env to that server and add
+  # COMPOSE_FILE=docker-compose.yml:docker-compose.external-db.yml, which keeps
+  # this bundled container from starting. `required: false` on backend's
+  # depends_on above means backend won't wait on or fail over a db that was
+  # never started.
+  #
+  # 2.17.0-2.18.x put this service behind a `local-db` profile instead, which
+  # silently stopped the database for anyone whose .env predated it (#94).
   db:
     image: postgres:15-alpine
     container_name: osint-crm-db

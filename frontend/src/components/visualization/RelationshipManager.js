@@ -1,13 +1,17 @@
 // File: frontend/src/components/visualization/RelationshipManager.js
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import RelationshipDiagram from '../RelationshipDiagram';
 import ObsidianGraph from './ObsidianGraph';
 import {
-  AlertCircle, Loader2, Network, Users, Eye, EyeOff,
-  Maximize2, RefreshCw, Bug, Filter, X, Search,
-  Briefcase, Tag, CheckCircle, GitBranch, Sparkles
+  AlertCircle, Loader2, Network,
+  Maximize2, Minimize2, RefreshCw, Bug, Filter, X, Search,
+  Briefcase, Tag, GitBranch, Sparkles
 } from 'lucide-react';
-import { peopleAPI, casesAPI, businessesAPI } from '../../utils/api';
+import { casesAPI, businessesAPI, transactionsAPI, cryptoWalletsAPI, relationshipsAPI } from '../../utils/api';
+import { DEFAULT_EDGE_LAYERS, EDGE_LAYERS } from '../../utils/edgeLayers';
+import { formatPersonName } from '../../utils/personName';
+import { useProject } from '../../contexts/ProjectContext';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
@@ -16,17 +20,26 @@ const RelationshipManager = ({
   showInModal = false,
   onClose = null
 }) => {
+  const { t } = useTranslation();
+  const { activeProjectId } = useProject();
   const [people, setPeople] = useState([]);
   const [businesses, setBusinesses] = useState([]);
+  const [cryptoWallets, setCryptoWallets] = useState([]);
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [showOsintData, setShowOsintData] = useState(false);
+  const [showOsintData] = useState(false);
   const [layoutType, setLayoutType] = useState('hierarchical');
   const [fullScreen, setFullScreen] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [viewMode, setViewMode] = useState('obsidian'); // 'reactflow' or 'obsidian'
+  // Edge classes shown in the Obsidian view (issue #50)
+  const [edgeLayers, setEdgeLayers] = useState(DEFAULT_EDGE_LAYERS);
+  // Solo a single layer — "governance only" is one click rather than unticking
+  // everything else (issue #65).
+  const [soloLayer, setSoloLayer] = useState(null);
+  const [txEdges, setTxEdges] = useState([]);
   
   // Filter states
   const [filters, setFilters] = useState({
@@ -47,12 +60,13 @@ const RelationshipManager = ({
       setError(null);
       
       console.log('=== RelationshipManager: Fetching people ===');
-      const response = await fetch(`${API_BASE_URL}/people`, {
+      const projectParam = activeProjectId ? `?project_id=${activeProjectId}` : '';
+      const response = await fetch(`${API_BASE_URL}/people${projectParam}`, {
         credentials: 'include'
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch people: ${response.status} ${response.statusText}`);
+        throw new Error(t('relationshipManager.errorFetchPeoplePrefix', { status: response.status, statusText: response.statusText }));
       }
       
       const data = await response.json();
@@ -76,9 +90,10 @@ const RelationshipManager = ({
           }
         }
         
-        // Validate each connection
+        // Validate each connection — person_id: null (legacy bad writes)
+        // must be dropped too, or the graph crashes rendering it (issue #56)
         connections = connections.filter(conn => {
-          if (!conn || typeof conn.person_id === 'undefined') {
+          if (!conn || conn.person_id == null) {
             console.warn(`Invalid connection found for person ${person.id}`);
             return false;
           }
@@ -98,13 +113,13 @@ const RelationshipManager = ({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t, activeProjectId]);
 
   // Fetch businesses
   const fetchBusinesses = useCallback(async () => {
     try {
       console.log('=== RelationshipManager: Fetching businesses ===');
-      const data = await businessesAPI.getAll();
+      const data = await businessesAPI.getAll({ project_id: activeProjectId });
       console.log('Fetched businesses count:', data.length);
       
       // Transform businesses to have a similar structure to people for the diagram
@@ -115,7 +130,19 @@ const RelationshipManager = ({
         category: 'Business',
         type: 'business',
         businessData: business, // Keep original business data
-        connections: [], // Businesses don't have direct connections in the current schema
+        // Ownership is the one person link the schema has today — draw it
+        // so businesses aren't isolated islands in the graph (issue #50)
+        connections: [
+          ...(business.owner_person_id != null
+            ? [{ person_id: business.owner_person_id, type: 'owner', note: 'Owner' }]
+            : []),
+          // Ownership chains: a holding company or shell owning this entity.
+          // Drawn parent → child (owner as source) so hierarchical layout ranks
+          // the owner above what it owns (issue #65).
+          ...(business.owner_business_id != null
+            ? [{ person_id: `business-${business.owner_business_id}`, type: 'owns_business', note: 'Owned by', _reverse: true }]
+            : []),
+        ],
         status: business.status || 'Active',
         case_name: business.case_name
       }));
@@ -124,34 +151,112 @@ const RelationshipManager = ({
     } catch (err) {
       console.error('Error fetching businesses:', err);
     }
-  }, []);
+  }, [activeProjectId]);
+
+  // Fetch crypto wallets (issue #82). Wallets have no legacy JSONB
+  // connections field to sync into -- relationships involving them live
+  // only in the `relationships` table, so this reads that table directly
+  // (both directions) rather than deriving edges client-side the way
+  // fetchBusinesses does from owner_person_id/owner_business_id.
+  const fetchCryptoWallets = useCallback(async () => {
+    try {
+      const [walletsRes, relationships] = await Promise.all([
+        cryptoWalletsAPI.getAll({ project_id: activeProjectId }),
+        relationshipsAPI.getAll({ project_id: activeProjectId }),
+      ]);
+      const wallets = walletsRes.data || [];
+      const idForEntity = (type, id) => (type === 'business' ? `business-${id}` : type === 'crypto_wallet' ? `wallet-${id}` : String(id));
+
+      const transformed = wallets.map(w => ({
+        id: `wallet-${w.id}`,
+        first_name: w.label || w.address,
+        last_name: '',
+        category: 'Crypto Wallet',
+        type: 'crypto_wallet',
+        status: w.status,
+        connections: (relationships || [])
+          .filter(r => r.source_type === 'crypto_wallet' && r.source_id === w.id)
+          .map(r => ({
+            person_id: idForEntity(r.target_type, r.target_id),
+            type: r.relationship_type,
+            note: r.note,
+          })),
+      }));
+      setCryptoWallets(transformed);
+    } catch (err) {
+      console.error('Error fetching crypto wallets:', err);
+    }
+  }, [activeProjectId]);
 
   // Fetch cases
   const fetchCases = useCallback(async () => {
     try {
-      const data = await casesAPI.getAll();
+      const data = await casesAPI.getAll({ project_id: activeProjectId });
       setCases(data);
     } catch (err) {
       console.error('Error fetching cases:', err);
     }
-  }, []);
+  }, [activeProjectId]);
+
+  // Derive graph edges from the transaction log (issue #50): one aggregated
+  // edge per giver→receiver pair. External (free-text) parties have no node,
+  // so only person/business references become edges.
+  const fetchTransactionEdges = useCallback(async () => {
+    try {
+      const res = await transactionsAPI.getAll({ limit: 1000, project_id: activeProjectId });
+      const list = res.data || [];
+      const agg = new Map();
+      list.forEach(t => {
+        const src = t.from_person_id != null ? String(t.from_person_id)
+          : t.from_business_id != null ? `business-${t.from_business_id}`
+          : t.from_wallet_id != null ? `wallet-${t.from_wallet_id}` : null;
+        const dst = t.to_person_id != null ? String(t.to_person_id)
+          : t.to_business_id != null ? `business-${t.to_business_id}`
+          : t.to_wallet_id != null ? `wallet-${t.to_wallet_id}` : null;
+        if (!src || !dst || src === dst) return;
+        const key = `${src}|${dst}`;
+        const e = agg.get(key) || { source: src, target: dst, count: 0, types: new Set() };
+        e.count += 1;
+        e.types.add(t.transaction_type);
+        agg.set(key, e);
+      });
+      setTxEdges([...agg.values()].map(e => ({
+        source: e.source,
+        target: e.target,
+        type: 'transaction',
+        note: `${[...e.types].join(', ')}${e.count > 1 ? ` ×${e.count}` : ''}`,
+        count: e.count,
+      })));
+    } catch (err) {
+      console.error('Error fetching transaction edges:', err);
+    }
+  }, [activeProjectId]);
 
   useEffect(() => {
     fetchPeople();
     fetchBusinesses();
+    fetchCryptoWallets();
     fetchCases();
-  }, [fetchPeople, fetchBusinesses, fetchCases]);
+    fetchTransactionEdges();
+  }, [fetchPeople, fetchBusinesses, fetchCryptoWallets, fetchCases, fetchTransactionEdges]);
 
   // Update connection between two people
   const updateConnection = useCallback(async (sourceId, targetId, type, note) => {
     try {
       console.log('=== Updating connection ===');
       console.log('Source:', sourceId, 'Target:', targetId, 'Type:', type);
-      
+
+      // Guard against non-numeric ids (e.g. business nodes) — persisting a
+      // NaN target becomes person_id: null in the DB and used to make the
+      // Entity Network view permanently crash (issue #56)
+      if (!Number.isInteger(sourceId) || !Number.isInteger(targetId)) {
+        throw new Error(t('relationshipManager.errorConnectionsOnlyPeople'));
+      }
+
       // Get the source person's current data
       const sourcePerson = people.find(p => p.id === sourceId);
       if (!sourcePerson) {
-        throw new Error('Source person not found');
+        throw new Error(t('relationshipManager.errorSourcePersonNotFound'));
       }
 
       // Create updated connections array
@@ -211,25 +316,25 @@ const RelationshipManager = ({
 
       if (!response.ok) {
         const errorData = await response.text();
-        throw new Error(`Failed to update connection: ${response.status} - ${errorData}`);
+        throw new Error(t('relationshipManager.errorUpdateConnectionPrefix', { status: response.status, errorData }));
       }
 
       // Refresh data
       await fetchPeople();
-      
-      alert('Connection created successfully!');
+
+      alert(t('relationshipManager.connectionCreatedSuccess'));
     } catch (err) {
       console.error('Error updating connection:', err);
-      alert('Failed to create connection: ' + err.message);
+      alert(t('relationshipManager.errorCreateConnection', { message: err.message }));
     }
-  }, [people, fetchPeople]);
+  }, [people, fetchPeople, t]);
 
   // Delete connection
   const deleteConnection = useCallback(async (sourceId, targetId) => {
     try {
       const sourcePerson = people.find(p => p.id === sourceId);
       if (!sourcePerson) {
-        throw new Error('Source person not found');
+        throw new Error(t('relationshipManager.errorSourcePersonNotFound'));
       }
 
       // Remove the connection
@@ -265,17 +370,72 @@ const RelationshipManager = ({
       });
 
       await fetchPeople();
-      alert('Connection deleted successfully!');
+      alert(t('relationshipManager.connectionDeletedSuccess'));
     } catch (err) {
       console.error('Error deleting connection:', err);
-      alert('Failed to delete connection: ' + err.message);
+      alert(t('relationshipManager.errorDeleteConnection', { message: err.message }));
     }
-  }, [people, fetchPeople]);
+  }, [people, fetchPeople, t]);
+
+  // Derive employer→employee edges by name-matching business.employees against
+  // people. There is no person_id on the employee schema (and no case column on
+  // businesses to scope by), so an exact, case-insensitive full-name match is
+  // the best link we have. Two distinct people who share a name would collide —
+  // acceptable until the employee schema carries a real person_id reference.
+  //
+  // The edge is drawn business → person and typed 'employee' (the target IS the
+  // employee), matching the 'owner' convention where the type names the target's
+  // role. This keeps the employer (business) as the edge source, so the
+  // hierarchical layout ranks it above its employees (employer at the top).
+  const enrichedBusinesses = useMemo(() => {
+    return businesses.map(business => {
+      const employees = business.businessData?.employees;
+      if (!Array.isArray(employees) || employees.length === 0) return business;
+
+      const seenPersonIds = new Set((business.connections || []).map(c => c.person_id));
+      const newConnections = [];
+
+      employees.forEach(employee => {
+        // Prefer the explicit reference. Name matching stays only as a fallback
+        // for entries created before employees carried a person_id — it can
+        // collide between two people who share a name, which is exactly the
+        // false positive a conflict-of-interest view must not invent.
+        let match = null;
+        if (employee.person_id != null) {
+          match = people.find(p => p.id === employee.person_id) || null;
+        } else if (employee.name) {
+          const search = employee.name.trim().toLowerCase();
+          match = people.find(p => formatPersonName(p).toLowerCase() === search) || null;
+        }
+        if (!match || seenPersonIds.has(match.id)) return;
+
+        seenPersonIds.add(match.id);
+        // Board members / decision makers are a governance tie, not employment:
+        // "It is enough for me to separate out decision makers from employees."
+        const type = employee.is_decision_maker ? 'board_member' : 'employee';
+        newConnections.push({
+          person_id: match.id,
+          type,
+          note: employee.role
+            ? t('obsidianGraph.employeeConnectionNote', { role: employee.role })
+            : t(type === 'board_member'
+                ? 'obsidianGraph.boardMemberConnectionNote'
+                : 'obsidianGraph.employeeConnectionNoteNoRole')
+        });
+      });
+
+      if (newConnections.length === 0) return business;
+      return {
+        ...business,
+        connections: [...(business.connections || []), ...newConnections]
+      };
+    });
+  }, [businesses, people, t]);
 
   // Apply filters to people and businesses
   const applyFilters = useCallback(() => {
-    // Combine people and businesses
-    let allEntities = [...people, ...businesses];
+    // Combine people, businesses, and crypto wallets
+    let allEntities = [...people, ...enrichedBusinesses, ...cryptoWallets];
     let filtered = allEntities;
     
     // Text search
@@ -333,6 +493,8 @@ const RelationshipManager = ({
         case 'year':
           cutoffDate.setFullYear(now.getFullYear() - 1);
           break;
+        default:
+          break;
       }
       
       filtered = filtered.filter(person => {
@@ -388,7 +550,7 @@ const RelationshipManager = ({
     }
     
     return filtered;
-  }, [people, businesses, filters]);
+  }, [people, enrichedBusinesses, cryptoWallets, filters]);
 
   // Get filtered people — memoised so ObsidianGraph only redraws when data/filters
   // actually change, not on every parent re-render (which would reset the D3
@@ -422,7 +584,7 @@ const RelationshipManager = ({
   }, [personId, people, applyFilters]);
 
   // Get unique values for filters
-  const allEntities = [...people, ...businesses];
+  const allEntities = [...people, ...enrichedBusinesses, ...cryptoWallets];
   const uniqueCategories = [...new Set(allEntities.map(e => e.category).filter(Boolean))];
   const uniqueStatuses = [...new Set(allEntities.map(e => e.status).filter(Boolean))];
   const uniqueConnectionTypes = [...new Set(
@@ -447,7 +609,7 @@ const RelationshipManager = ({
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-        <span className="ml-2 text-gray-600 dark:text-gray-400">Loading relationships...</span>
+        <span className="ml-2 text-gray-600 dark:text-gray-400">{t('relationshipManager.loadingRelationships')}</span>
       </div>
     );
   }
@@ -456,7 +618,7 @@ const RelationshipManager = ({
     return (
       <div className="flex items-center justify-center h-64">
         <AlertCircle className="w-8 h-8 text-red-500" />
-        <span className="ml-2 text-red-600">Error: {error}</span>
+        <span className="ml-2 text-red-600">{t('relationshipManager.errorLabel', { message: error })}</span>
       </div>
     );
   }
@@ -484,10 +646,14 @@ const RelationshipManager = ({
         <div className="flex items-center space-x-3">
           <Network className="w-5 h-5 text-blue-600" />
           <h3 className="text-lg font-semibold text-gray-900 dark:text-slate-100">
-            {personId ? 'Person Relationships' : 'Global Relationship Network'}
+            {personId ? t('relationshipManager.personRelationships') : t('relationshipManager.globalRelationshipNetwork')}
           </h3>
           <span className="text-sm text-gray-600 dark:text-slate-400">
-            ({filteredPeople.length} entities: {filteredPeople.filter(e => !e.type || e.type !== 'business').length} people, {filteredPeople.filter(e => e.type === 'business').length} businesses)
+            {t('relationshipManager.entitiesSummary', {
+              total: filteredPeople.length,
+              people: filteredPeople.filter(e => !e.type).length,
+              businesses: filteredPeople.filter(e => e.type === 'business').length,
+            })}
           </span>
         </div>
         
@@ -499,32 +665,67 @@ const RelationshipManager = ({
               className={`px-2 py-1 text-xs rounded flex items-center space-x-1 transition ${
                 viewMode === 'obsidian' ? 'bg-white dark:bg-slate-600 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-slate-300 hover:text-gray-900 dark:hover:text-slate-100'
               }`}
-              title="Obsidian View (Force-Directed)"
+              title={t('relationshipManager.obsidianViewTitle')}
             >
               <Sparkles className="w-3 h-3" />
-              <span className="hidden md:inline">Obsidian</span>
+              <span className="hidden md:inline">{t('relationshipManager.obsidian')}</span>
             </button>
             <button
               onClick={() => setViewMode('reactflow')}
               className={`px-2 py-1 text-xs rounded flex items-center space-x-1 transition ${
                 viewMode === 'reactflow' ? 'bg-white dark:bg-slate-600 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-slate-300 hover:text-gray-900 dark:hover:text-slate-100'
               }`}
-              title="Classic View (ReactFlow)"
+              title={t('relationshipManager.classicViewTitle')}
             >
               <GitBranch className="w-3 h-3" />
-              <span className="hidden md:inline">Classic</span>
+              <span className="hidden md:inline">{t('relationshipManager.classic')}</span>
             </button>
           </div>
+
+          {/* Edge class toggles (issue #50) — Obsidian view only */}
+          {viewMode === 'obsidian' && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1.5 bg-gray-100 dark:bg-slate-700 rounded-md text-xs">
+              {EDGE_LAYERS.map((layer) => {
+                const soloed = soloLayer === layer;
+                return (
+                  <span key={layer} className="flex items-center space-x-1">
+                    <label className={`flex items-center space-x-1 cursor-pointer ${soloLayer && !soloed ? 'opacity-40' : ''} text-gray-700 dark:text-slate-300`}>
+                      <input
+                        type="checkbox"
+                        checked={edgeLayers[layer] !== false}
+                        disabled={!!soloLayer}
+                        onChange={(e) => setEdgeLayers({ ...edgeLayers, [layer]: e.target.checked })}
+                        className="h-3 w-3 text-blue-600 rounded"
+                      />
+                      <span>{t(`relationshipManager.edgeLayer.${layer}`)}</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setSoloLayer(soloed ? null : layer)}
+                      title={t('relationshipManager.soloLayerTitle')}
+                      className={`px-1 rounded border text-[10px] leading-4 ${
+                        soloed
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'border-gray-300 dark:border-slate-500 text-gray-500 dark:text-slate-400 hover:bg-gray-200 dark:hover:bg-slate-600'
+                      }`}
+                    >
+                      {t('relationshipManager.soloLayerShort')}
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
 
           <button
             onClick={() => setShowFilters(!showFilters)}
             className={`px-3 py-1.5 text-sm rounded-md flex items-center space-x-2 ${
               showFilters ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
             }`}
-            title="Toggle Filters"
+            title={t('relationshipManager.toggleFilters')}
           >
             <Filter className="w-4 h-4" />
-            <span className="hidden sm:inline">Filters</span>
+            <span className="hidden sm:inline">{t('relationshipManager.filters')}</span>
             {activeFilterCount > 0 && (
               <span className="ml-1 px-1.5 py-0.5 bg-white dark:bg-slate-800 text-blue-600 rounded-full text-xs font-medium">
                 {activeFilterCount}
@@ -537,29 +738,29 @@ const RelationshipManager = ({
             className={`px-3 py-1.5 text-sm rounded-md flex items-center space-x-2 ${
               debugMode ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
             }`}
-            title="Toggle Debug Info"
+            title={t('relationshipManager.toggleDebugInfo')}
           >
             <Bug className="w-4 h-4" />
-            <span className="hidden sm:inline">Debug</span>
+            <span className="hidden sm:inline">{t('relationshipManager.debug')}</span>
           </button>
 
           <button
             onClick={fetchPeople}
             className="px-3 py-1.5 text-sm rounded-md flex items-center space-x-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 text-gray-700 dark:text-slate-300"
-            title="Refresh Data"
+            title={t('relationshipManager.refreshData')}
           >
             <RefreshCw className="w-4 h-4" />
           </button>
-          
+
           {viewMode === 'reactflow' && (
             <select
               value={layoutType}
               onChange={(e) => setLayoutType(e.target.value)}
               className="px-3 py-1.5 text-sm border border-gray-300 dark:border-slate-600 rounded-md text-gray-700 dark:text-slate-300"
             >
-              <option value="hierarchical">Hierarchical</option>
-              <option value="circular">Circular</option>
-              <option value="grid">Grid</option>
+              <option value="hierarchical">{t('relationshipManager.hierarchical')}</option>
+              <option value="circular">{t('relationshipManager.circular')}</option>
+              <option value="grid">{t('relationshipManager.grid')}</option>
             </select>
           )}
 
@@ -567,21 +768,23 @@ const RelationshipManager = ({
             <button
               onClick={() => setFullScreen(!fullScreen)}
               className="px-3 py-1.5 text-sm rounded-md bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 text-gray-700 dark:text-slate-300"
-              title={fullScreen ? "Exit fullscreen" : "Enter fullscreen"}
+              title={fullScreen ? t('relationshipManager.exitFullscreen') : t('relationshipManager.enterFullscreen')}
             >
-              <Maximize2 className="w-4 h-4" />
+              {fullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
           )}
 
-          {(showInModal || fullScreen) && onClose && (
+          {(showInModal || fullScreen) && (
             <button
               onClick={() => {
-                setFullScreen(false);
-                if (showInModal || fullScreen) onClose();
+                // In fullscreen, Close means "leave fullscreen". In a modal it
+                // means "close the modal" — only then does onClose apply.
+                if (fullScreen) setFullScreen(false);
+                else if (showInModal && onClose) onClose();
               }}
               className="px-3 py-1.5 text-sm rounded-md bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 text-gray-700 dark:text-slate-300"
             >
-              Close
+              {t('common.close')}
             </button>
           )}
         </div>
@@ -593,7 +796,7 @@ const RelationshipManager = ({
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
             {/* Search */}
             <div className="md:col-span-2 lg:col-span-1">
-              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Search</label>
+              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">{t('relationshipManager.searchLabel')}</label>
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-slate-500 w-3 h-3" />
                 <input
@@ -601,14 +804,14 @@ const RelationshipManager = ({
                   value={filters.searchTerm}
                   onChange={(e) => setFilters({ ...filters, searchTerm: e.target.value })}
                   className="w-full pl-8 pr-2 py-1.5 border rounded text-sm"
-                  placeholder="Name or notes..."
+                  placeholder={t('relationshipManager.searchPlaceholder')}
                 />
               </div>
             </div>
             
             {/* Cases */}
             <div>
-              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Cases</label>
+              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">{t('relationshipManager.casesLabel')}</label>
               <select
                 multiple
                 value={filters.selectedCases}
@@ -629,7 +832,7 @@ const RelationshipManager = ({
             
             {/* Categories */}
             <div>
-              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Categories</label>
+              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">{t('relationshipManager.categoriesLabel')}</label>
               <select
                 multiple
                 value={filters.selectedCategories}
@@ -650,7 +853,7 @@ const RelationshipManager = ({
             
             {/* Statuses */}
             <div>
-              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Status</label>
+              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">{t('relationshipManager.statusLabel')}</label>
               <select
                 multiple
                 value={filters.selectedStatuses}
@@ -671,7 +874,7 @@ const RelationshipManager = ({
             
             {/* Connection Types */}
             <div>
-              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Connection Types</label>
+              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">{t('relationshipDiagram.connectionTypesTitle')}</label>
               <select
                 multiple
                 value={filters.connectionTypes}
@@ -692,7 +895,7 @@ const RelationshipManager = ({
             
             {/* Min Connections */}
             <div>
-              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Min Connections</label>
+              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">{t('relationshipManager.minConnectionsLabel')}</label>
               <input
                 type="number"
                 value={filters.minConnections}
@@ -704,19 +907,19 @@ const RelationshipManager = ({
             
             {/* Date Range */}
             <div>
-              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Updated</label>
+              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">{t('relationshipManager.updatedLabel')}</label>
               <select
                 value={filters.dateRange}
                 onChange={(e) => setFilters({ ...filters, dateRange: e.target.value })}
                 className="w-full px-2 py-1.5 border rounded text-sm"
               >
-                <option value="all">All Time</option>
-                <option value="week">Last Week</option>
-                <option value="month">Last Month</option>
-                <option value="year">Last Year</option>
+                <option value="all">{t('relationshipManager.allTime')}</option>
+                <option value="week">{t('relationshipManager.lastWeek')}</option>
+                <option value="month">{t('relationshipManager.lastMonth')}</option>
+                <option value="year">{t('relationshipManager.lastYear')}</option>
               </select>
             </div>
-            
+
             {/* Options */}
             <div className="flex items-center space-x-3 md:col-span-2 lg:col-span-1">
               <label className="flex items-center space-x-1 cursor-pointer">
@@ -726,14 +929,14 @@ const RelationshipManager = ({
                   onChange={(e) => setFilters({ ...filters, showIsolated: e.target.checked })}
                   className="h-3 w-3 text-blue-600 rounded"
                 />
-                <span className="text-xs text-gray-700 dark:text-gray-300">Show Isolated</span>
+                <span className="text-xs text-gray-700 dark:text-gray-300">{t('relationshipManager.showIsolated')}</span>
               </label>
-              
+
               <button
                 onClick={resetFilters}
                 className="px-2 py-1 text-xs text-blue-600 hover:text-blue-700"
               >
-                Reset
+                {t('relationshipManager.reset')}
               </button>
             </div>
           </div>
@@ -743,7 +946,7 @@ const RelationshipManager = ({
             <div className="mt-2 flex flex-wrap gap-1">
               {filters.searchTerm && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800">
-                  Search: {filters.searchTerm}
+                  {t('relationshipManager.searchFilterTag', { term: filters.searchTerm })}
                   <button
                     onClick={() => setFilters({ ...filters, searchTerm: '' })}
                     className="ml-1 text-blue-600 hover:text-blue-800"
@@ -787,7 +990,13 @@ const RelationshipManager = ({
               
               {filters.dateRange !== 'all' && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-orange-100 text-orange-800">
-                  Updated: Last {filters.dateRange}
+                  {t('relationshipManager.updatedFilterTag', {
+                    range: {
+                      week: t('relationshipManager.lastWeek'),
+                      month: t('relationshipManager.lastMonth'),
+                      year: t('relationshipManager.lastYear'),
+                    }[filters.dateRange] || filters.dateRange,
+                  })}
                   <button
                     onClick={() => setFilters({ ...filters, dateRange: 'all' })}
                     className="ml-1 text-orange-600 hover:text-orange-800"
@@ -805,18 +1014,18 @@ const RelationshipManager = ({
       {debugMode && (
         <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2 text-sm">
           <details>
-            <summary className="cursor-pointer font-medium">Debug Information</summary>
+            <summary className="cursor-pointer font-medium">{t('relationshipDiagram.debugInformation')}</summary>
             <div className="mt-2 space-y-1">
-              <div>Total People: {people.length}</div>
-              <div>Total Businesses: {businesses.length}</div>
-              <div>Filtered Entities: {filteredPeople.length}</div>
+              <div>{t('relationshipManager.totalPeople', { count: people.length })}</div>
+              <div>{t('relationshipManager.totalBusinesses', { count: businesses.length })}</div>
+              <div>{t('relationshipManager.filteredEntities', { count: filteredPeople.length })}</div>
               <div>
-                Entities with connections: {[...people, ...businesses].filter(e => e.connections && e.connections.length > 0).length}
+                {t('relationshipManager.entitiesWithConnections', { count: [...people, ...enrichedBusinesses].filter(e => e.connections && e.connections.length > 0).length })}
               </div>
               <div>
-                Total connections: {[...people, ...businesses].reduce((sum, e) => sum + (e.connections?.length || 0), 0)}
+                {t('relationshipManager.totalConnectionsDebug', { count: [...people, ...enrichedBusinesses].reduce((sum, e) => sum + (e.connections?.length || 0), 0) })}
               </div>
-              <div>Active Filters: {activeFilterCount}</div>
+              <div>{t('relationshipManager.activeFilters', { count: activeFilterCount })}</div>
             </div>
           </details>
         </div>
@@ -828,6 +1037,9 @@ const RelationshipManager = ({
           <ObsidianGraph
             people={filteredPeople}
             selectedPersonId={personId}
+            edgeLayers={edgeLayers}
+            soloLayer={soloLayer}
+            transactionEdges={txEdges}
             onUpdateConnection={updateConnection}
             onDeleteConnection={deleteConnection}
             onNodeClick={(person) => {
@@ -843,6 +1055,7 @@ const RelationshipManager = ({
             onDeleteConnection={deleteConnection}
             showOsintData={showOsintData}
             layoutType={layoutType}
+            onLayoutTypeChange={setLayoutType}
           />
         )}
       </div>

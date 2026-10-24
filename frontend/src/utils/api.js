@@ -24,7 +24,12 @@ const fetchAPI = async (endpoint, options = {}) => {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      const error = new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      // Callers need the status to tell "no permission" (403) apart from
+      // "backend down" — treating them the same locked non-admin users out
+      // with a false "System Offline" (issue #58)
+      error.status = response.status;
+      throw error;
     }
 
     if (responseType === 'blob') {
@@ -59,9 +64,11 @@ const fetchAPI = async (endpoint, options = {}) => {
 
 // People API
 export const peopleAPI = {
-  getAll: ({ limit = 100, offset = 0 } = {}) =>
-    fetchAPI(`/people?limit=${limit}&offset=${offset}`, { returnMeta: true }),
-  
+  getAll: ({ limit = 100, offset = 0, ...rest } = {}) =>
+    fetchAPI(`/people${buildQuery({ limit, offset, ...rest })}`, { returnMeta: true }),
+
+  getById: (id) => fetchAPI(`/people/${id}`),
+
   create: (personData) => fetchAPI('/people', {
     method: 'POST',
     body: JSON.stringify(personData),
@@ -79,7 +86,7 @@ export const peopleAPI = {
 
 // Businesses API
 export const businessesAPI = {
-  getAll: () => fetchAPI('/businesses'),
+  getAll: (params = {}) => fetchAPI(`/businesses${buildQuery(params)}`),
   
   create: (businessData) => fetchAPI('/businesses', {
     method: 'POST',
@@ -98,6 +105,12 @@ export const businessesAPI = {
 
 // Tools API
 export const toolsAPI = {
+  // Bulk import: one request rather than one per row, so a few hundred tools
+  // don't trip the rate limiter.
+  bulkImport: (payload) => fetchAPI('/tools/bulk-import', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   getAll: () => fetchAPI('/tools'),
   
   create: (toolData) => fetchAPI('/tools', {
@@ -117,7 +130,7 @@ export const toolsAPI = {
 
 // Todos API
 export const todosAPI = {
-  getAll: () => fetchAPI('/todos'),
+  getAll: (params = {}) => fetchAPI(`/todos${buildQuery(params)}`),
   
   create: (todoData) => fetchAPI('/todos', {
     method: 'POST',
@@ -136,7 +149,7 @@ export const todosAPI = {
 
 // Cases API
 export const casesAPI = {
-  getAll: () => fetchAPI('/cases'),
+  getAll: (params = {}) => fetchAPI(`/cases${buildQuery(params)}`),
   
   create: (caseData) => fetchAPI('/cases', {
     method: 'POST',
@@ -149,6 +162,47 @@ export const casesAPI = {
   }),
   
   delete: (id) => fetchAPI(`/cases/${id}`, {
+    method: 'DELETE',
+  }),
+};
+
+// Projects API (issue #83) — the hard isolation boundary; cases nest inside a project.
+export const projectsAPI = {
+  getAll: () => fetchAPI('/projects'),
+
+  create: (projectData) => fetchAPI('/projects', {
+    method: 'POST',
+    body: JSON.stringify(projectData),
+  }),
+
+  update: (id, projectData) => fetchAPI(`/projects/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(projectData),
+  }),
+
+  // Per-entity row counts for the delete-confirmation dialog (issue #88).
+  getStats: (id) => fetchAPI(`/projects/${id}/stats`),
+
+  // Cascade delete (issue #88). When the project holds data the backend
+  // requires confirmName to equal the project's exact name.
+  delete: (id, confirmName) => fetchAPI(`/projects/${id}`, {
+    method: 'DELETE',
+    body: JSON.stringify(confirmName != null ? { confirm_name: confirmName } : {}),
+  }),
+};
+
+// Project Members API (issue #84)
+export const projectMembersAPI = {
+  getAll: (projectId) => fetchAPI(`/projects/${projectId}/members`),
+  add: (projectId, data) => fetchAPI(`/projects/${projectId}/members`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  updateRole: (projectId, userId, project_role) => fetchAPI(`/projects/${projectId}/members/${userId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ project_role }),
+  }),
+  remove: (projectId, userId) => fetchAPI(`/projects/${projectId}/members/${userId}`, {
     method: 'DELETE',
   }),
 };
@@ -173,6 +227,50 @@ export const customFieldsAPI = {
 };
 
 // Model Options API
+// Running version + whether a newer release exists. The check runs on the
+// server; the browser never contacts GitHub.
+export const versionAPI = {
+  get: () => fetchAPI('/version'),
+};
+
+export const updateSettingsAPI = {
+  get: () => fetchAPI('/settings/updates'),
+  update: (payload) => fetchAPI('/settings/updates', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  }),
+};
+
+// Archived-project retention policy (issue #88). retentionDays: 0 = never.
+// Server-side global app settings (issue #91): branding + system-wide
+// defaults for language/theme. GET needs no auth — the login screen and the
+// first app paint need it before we know who's signed in.
+export const brandingAPI = {
+  get: () => fetchAPI('/settings/branding'),
+  update: (data) => fetchAPI('/settings/branding', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
+};
+
+export const projectRetentionAPI = {
+  get: () => fetchAPI('/settings/project-retention'),
+  update: (retentionDays) => fetchAPI('/settings/project-retention', {
+    method: 'PUT',
+    body: JSON.stringify({ retentionDays }),
+  }),
+};
+
+// Geocoding provider config (issue #62). The API key is write-only server
+// side — get() reports only whether one is stored, never its value.
+export const geocodingSettingsAPI = {
+  get: () => fetchAPI('/settings/geocoding'),
+  update: (payload) => fetchAPI('/settings/geocoding', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  }),
+};
+
 export const modelOptionsAPI = {
   getAll: () => fetchAPI('/settings/model-options'),
   
@@ -189,14 +287,6 @@ export const modelOptionsAPI = {
   delete: (id) => fetchAPI(`/settings/model-options/${id}`, {
     method: 'DELETE',
   }),
-};
-
-// Audit Log API
-export const auditAPI = {
-  getAll: (params = {}) => {
-    const queryParams = new URLSearchParams(params).toString();
-    return fetchAPI(`/audit-logs${queryParams ? '?' + queryParams : ''}`);
-  },
 };
 
 // Export/Import API - Fixed export function
@@ -238,7 +328,7 @@ export const exportAPI = {
 };
 
 export const importAPI = {
-  import: (data) => fetchAPI('/import', {
+  import: (data, projectId) => fetchAPI(`/import${buildQuery({ project_id: projectId })}`, {
     method: 'POST',
     body: JSON.stringify(data),
   }),
@@ -270,29 +360,7 @@ export const uploadLogo = async (file) => {
 
 // Locations API
 export const locationsAPI = {
-  getAll: () => fetchAPI('/locations'),
-};
-
-// Advanced Search API
-export const searchAPI = {
-  advanced: (params) => {
-    const queryParams = new URLSearchParams();
-    
-    // Convert complex search params to query string
-    Object.entries(params).forEach(([key, value]) => {
-      if (Array.isArray(value)) {
-        value.forEach(v => queryParams.append(`${key}[]`, v));
-      } else if (typeof value === 'object') {
-        Object.entries(value).forEach(([subKey, subValue]) => {
-          queryParams.append(`${key}[${subKey}]`, subValue);
-        });
-      } else if (value !== '' && value !== null) {
-        queryParams.append(key, value);
-      }
-    });
-    
-    return fetchAPI(`/search/advanced?${queryParams.toString()}`);
-  }
+  getAll: (params = {}) => fetchAPI(`/locations${buildQuery(params)}`),
 };
 
 // Travel History API
@@ -318,7 +386,7 @@ export const travelHistoryAPI = {
 
 // Business API
 export const businessAPI = {
-  getAll: () => fetchAPI('/businesses'),
+  getAll: (params = {}) => fetchAPI(`/businesses${buildQuery(params)}`),
   
   getById: (id) => fetchAPI(`/businesses/${id}`),
   
@@ -372,14 +440,15 @@ export const wirelessNetworksAPI = {
     method: 'DELETE',
   }),
 
-  bulkDelete: (ids) => fetchAPI('/wireless-networks/bulk-delete', {
+  bulkDelete: (ids, projectId) => fetchAPI('/wireless-networks/bulk-delete', {
     method: 'POST',
-    body: JSON.stringify({ ids }),
+    body: JSON.stringify({ ids, project_id: projectId }),
   }),
 
-  importKML: async (file) => {
+  importKML: async (file, projectId) => {
     const formData = new FormData();
     formData.append('kmlFile', file);
+    if (projectId) formData.append('project_id', projectId);
 
     const response = await fetch(`${API_BASE_URL}/wireless-networks/import-kml`, {
       method: 'POST',
@@ -395,7 +464,7 @@ export const wirelessNetworksAPI = {
     return response.json();
   },
 
-  getStats: () => fetchAPI('/wireless-networks/stats'),
+  getStats: (params = {}) => fetchAPI(`/wireless-networks/stats${buildQuery(params)}`),
 
   getNearby: (latitude, longitude, radius = 0.5) =>
     fetchAPI(`/wireless-networks/nearby?latitude=${latitude}&longitude=${longitude}&radius=${radius}`),
@@ -412,6 +481,74 @@ export const wirelessNetworksAPI = {
   removeAssociation: (id) => fetchAPI(`/wireless-networks/${id}/associate`, {
     method: 'DELETE',
   }),
+};
+
+// Helper to build a query string from a params object (skips empty values)
+const buildQuery = (params = {}) => {
+  const qp = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== '') qp.append(key, value);
+  });
+  const s = qp.toString();
+  return s ? `?${s}` : '';
+};
+
+// Properties API (transaction tracking — issue #43)
+export const propertiesAPI = {
+  getAll: (params = {}) => fetchAPI(`/properties${buildQuery(params)}`),
+  getById: (id) => fetchAPI(`/properties/${id}`),
+  create: (data) => fetchAPI('/properties', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id, data) => fetchAPI(`/properties/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  remove: (id) => fetchAPI(`/properties/${id}`, { method: 'DELETE' }),
+  getTransactions: (id) => fetchAPI(`/properties/${id}/transactions`),
+  getLedger: (id, params = {}) => fetchAPI(`/properties/${id}/ledger${buildQuery(params)}`),
+};
+
+// Assets API
+export const assetsAPI = {
+  getAll: (params = {}) => fetchAPI(`/assets${buildQuery(params)}`),
+  getById: (id) => fetchAPI(`/assets/${id}`),
+  create: (data) => fetchAPI('/assets', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id, data) => fetchAPI(`/assets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  remove: (id) => fetchAPI(`/assets/${id}`, { method: 'DELETE' }),
+  getByPerson: (personId) => fetchAPI(`/people/${personId}/assets`),
+};
+
+// Crypto Wallets API (issue #82)
+export const cryptoWalletsAPI = {
+  getAll: (params = {}) => fetchAPI(`/crypto-wallets${buildQuery(params)}`),
+  getById: (id) => fetchAPI(`/crypto-wallets/${id}`),
+  create: (data) => fetchAPI('/crypto-wallets', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id, data) => fetchAPI(`/crypto-wallets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  remove: (id) => fetchAPI(`/crypto-wallets/${id}`, { method: 'DELETE' }),
+};
+
+// Relationships API (issue #83's write-of-record table; issue #82's wallet
+// links are the first frontend consumer to read/write it directly rather
+// than through the person/business JSONB sync path).
+export const relationshipsAPI = {
+  getAll: (params = {}) => fetchAPI(`/relationships${buildQuery(params)}`),
+  create: (data) => fetchAPI('/relationships', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id, data) => fetchAPI(`/relationships/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  remove: (id) => fetchAPI(`/relationships/${id}`, { method: 'DELETE' }),
+};
+
+// Transactions API
+export const transactionsAPI = {
+  getAll: (params = {}) => fetchAPI(`/transactions${buildQuery(params)}`),
+  getById: (id) => fetchAPI(`/transactions/${id}`),
+  create: (data) => fetchAPI('/transactions', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id, data) => fetchAPI(`/transactions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  remove: (id) => fetchAPI(`/transactions/${id}`, { method: 'DELETE' }),
+  getByPerson: (personId) => fetchAPI(`/people/${personId}/transactions`),
+  getByBusiness: (businessId) => fetchAPI(`/businesses/${businessId}/transactions`),
+  getByProperty: (propertyId) => fetchAPI(`/properties/${propertyId}/transactions`),
+};
+
+// Entity ledger + venue analytics API
+export const ledgerAPI = {
+  get: (entityType, id, params = {}) => fetchAPI(`/${entityType}/${id}/ledger${buildQuery(params)}`),
+  venueStats: (businessId) => fetchAPI(`/businesses/${businessId}/venue-stats`),
 };
 
 export { API_BASE_URL };

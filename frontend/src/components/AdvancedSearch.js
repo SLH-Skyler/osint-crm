@@ -1,11 +1,16 @@
 // File: frontend/src/components/AdvancedSearch.js
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { peopleAPI, casesAPI, modelOptionsAPI, customFieldsAPI } from '../utils/api';
 import ReportGenerator from './ReportGenerator';
 import SearchFilters from './search/SearchFilters';
 import SearchResults from './search/SearchResults';
+import { personSearchHaystack } from '../utils/personName';
+import { useProject } from '../contexts/ProjectContext';
 
 const AdvancedSearch = ({ onSelectPerson, onClose }) => {
+  const { t } = useTranslation();
+  const { activeProjectId } = useProject();
   const [searchParams, setSearchParams] = useState({
     // Basic search
     searchText: '',
@@ -66,13 +71,14 @@ const AdvancedSearch = ({ onSelectPerson, onClose }) => {
 
   useEffect(() => {
     loadInitialData();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId]);
 
   const loadInitialData = async () => {
     try {
       const [casesData, { data: peopleData }, customFieldsData, modelOptionsData] = await Promise.all([
-        casesAPI.getAll(),
-        peopleAPI.getAll({ limit: 1000 }),
+        casesAPI.getAll({ project_id: activeProjectId }),
+        peopleAPI.getAll({ limit: 1000, project_id: activeProjectId }),
         customFieldsAPI.getAll(),
         modelOptionsAPI.getAll()
       ]);
@@ -98,8 +104,9 @@ const AdvancedSearch = ({ onSelectPerson, onClose }) => {
         const searchLower = searchParams.searchText.toLowerCase();
         filtered = filtered.filter(person => {
           if (searchParams.searchIn.includes('name')) {
-            const fullName = `${person.first_name || ''} ${person.last_name || ''}`.toLowerCase();
-            if (fullName.includes(searchLower)) return true;
+            // Matches any name part and both orderings, so a person is findable
+            // by the name the app actually shows — patronymics included (#78).
+            if (personSearchHaystack(person).includes(searchLower)) return true;
           }
           
           if (searchParams.searchIn.includes('aliases') && person.aliases) {
@@ -195,8 +202,7 @@ const AdvancedSearch = ({ onSelectPerson, onClose }) => {
             const connectedPerson = people.find(p => p.id === conn.person_id);
             if (!connectedPerson) return false;
             
-            const fullName = `${connectedPerson.first_name || ''} ${connectedPerson.last_name || ''}`.toLowerCase();
-            return fullName.includes(searchLower) &&
+            return personSearchHaystack(connectedPerson).includes(searchLower) &&
               (!searchParams.connectionType || conn.type === searchParams.connectionType);
           });
         });
@@ -287,7 +293,7 @@ const AdvancedSearch = ({ onSelectPerson, onClose }) => {
       setTotalResults(filtered.length);
     } catch (error) {
       console.error('Error performing search:', error);
-      alert('Search failed. Please try again.');
+      alert(t('searchFilters.errorSearchFailed'));
     } finally {
       setLoading(false);
     }
@@ -370,31 +376,9 @@ const AdvancedSearch = ({ onSelectPerson, onClose }) => {
     document.body.removeChild(a);
   };
 
-  const getFullName = (person) => {
-    return `${person.first_name || ''} ${person.last_name || ''}`.trim() || 'Unknown';
-  };
-
-  const getCrmStatuses = () => {
-    return modelOptions
-      .filter(opt => opt.model_type === 'crm_status' && opt.is_active)
-      .sort((a, b) => a.display_order - b.display_order);
-  };
-
-  const getConnectionTypes = () => {
-    return modelOptions
-      .filter(opt => opt.model_type === 'connection_type' && opt.is_active)
-      .sort((a, b) => a.display_order - b.display_order);
-  };
-
-  const getLocationTypes = () => {
-    return modelOptions
-      .filter(opt => opt.model_type === 'location_type' && opt.is_active)
-      .sort((a, b) => a.display_order - b.display_order);
-  };
-
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-7xl max-h-[95vh] overflow-hidden flex">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 md:p-4">
+      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full h-full md:h-auto md:max-w-7xl md:max-h-[95vh] overflow-hidden flex flex-col md:flex-row">
         <SearchFilters
           searchParams={searchParams}
           setSearchParams={setSearchParams}

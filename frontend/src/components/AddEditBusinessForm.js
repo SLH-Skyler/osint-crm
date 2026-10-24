@@ -1,10 +1,16 @@
 // File: frontend/src/components/AddEditBusinessForm.js
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, Plus, Trash2, MapPin, Building2, User, Users, Phone, Mail, Globe } from 'lucide-react';
 import { businessAPI, peopleAPI } from '../utils/api';
+import { formatPersonName } from '../utils/personName';
+import { useProject } from '../contexts/ProjectContext';
 
 const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
+  const { t } = useTranslation();
+  const { activeProjectId } = useProject();
   const [people, setPeople] = useState([]);
+  const [businesses, setBusinesses] = useState([]);
   const [formData, setFormData] = useState({
     name: '',
     type: '',
@@ -20,6 +26,7 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
     email: '',
     website: '',
     owner_person_id: null,
+    owner_business_id: null,
     registration_number: '',
     registration_date: '',
     status: 'active',
@@ -27,11 +34,12 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
     notes: ''
   });
   
-  const [newEmployee, setNewEmployee] = useState({ name: '', role: '', department: '', email: '', notes: '' });
+  const [newEmployee, setNewEmployee] = useState({ name: '', person_id: null, is_decision_maker: false, role: '', department: '', email: '', notes: '' });
   const [showEmployeeForm, setShowEmployeeForm] = useState(false);
 
   useEffect(() => {
     fetchPeople();
+    fetchBusinesses();
     if (business) {
       setFormData({
         name: business.name || '',
@@ -42,12 +50,15 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
         state: business.state || '',
         country: business.country || '',
         postal_code: business.postal_code || '',
-        latitude: business.latitude,
-        longitude: business.longitude,
+        // DECIMAL columns arrive as strings from the API — coerce so
+        // .toFixed() below doesn't crash (issue #53)
+        latitude: business.latitude != null ? Number(business.latitude) : null,
+        longitude: business.longitude != null ? Number(business.longitude) : null,
         phone: business.phone || '',
         email: business.email || '',
         website: business.website || '',
         owner_person_id: business.owner_person_id,
+        owner_business_id: business.owner_business_id ?? null,
         registration_number: business.registration_number || '',
         registration_date: business.registration_date ? business.registration_date.split('T')[0] : '',
         status: business.status || 'active',
@@ -55,31 +66,47 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
         notes: business.notes || ''
       });
     }
-  }, [business]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [business, activeProjectId]);
 
   const fetchPeople = async () => {
     try {
-      const data = await peopleAPI.getAll();
-      setPeople(data);
+      const { data: peopleList } = await peopleAPI.getAll({ project_id: activeProjectId });
+      setPeople(peopleList);
     } catch (error) {
       console.error('Error fetching people:', error);
     }
   };
 
+  // Candidates for the owning-business picker (ownership chains, issue #65)
+  const fetchBusinesses = async () => {
+    try {
+      const list = await businessAPI.getAll({ project_id: activeProjectId });
+      setBusinesses(Array.isArray(list) ? list : list?.data ?? []);
+    } catch (error) {
+      console.error('Error fetching businesses:', error);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
+    if (!business && !activeProjectId) {
+      alert(t('businessForm.errorNoActiveProject'));
+      return;
+    }
+
     try {
       let savedBusiness;
       if (business) {
         savedBusiness = await businessAPI.update(business.id, formData);
       } else {
-        savedBusiness = await businessAPI.create(formData);
+        savedBusiness = await businessAPI.create({ ...formData, project_id: activeProjectId });
       }
       onSave(savedBusiness);
     } catch (error) {
       console.error('Error saving business:', error);
-      alert('Failed to save business: ' + error.message);
+      alert(t('businessForm.errorSaveBusiness', { message: error.message }));
     }
   };
 
@@ -89,7 +116,7 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
         ...formData,
         employees: [...formData.employees, { ...newEmployee, id: Date.now() }]
       });
-      setNewEmployee({ name: '', role: '', department: '', email: '', notes: '' });
+      setNewEmployee({ name: '', person_id: null, is_decision_maker: false, role: '', department: '', email: '', notes: '' });
       setShowEmployeeForm(false);
     }
   };
@@ -103,7 +130,7 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
 
   const geocodeAddress = async () => {
     if (!formData.address && !formData.city && !formData.country) {
-      alert('Please enter an address, city, or country to geocode');
+      alert(t('businessForm.errorEnterAddressToGeocode'));
       return;
     }
 
@@ -120,31 +147,47 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
 
       if (response.ok && data.lat) {
         setFormData({ ...formData, latitude: data.lat, longitude: data.lng });
-        alert('Location geocoded successfully!');
+        alert(t('businessForm.geocodeSuccess'));
       } else {
-        let msg = data.message || 'Could not find coordinates for this address.';
+        let msg = data.message || t('businessForm.geocodeNotFoundFallback');
         if (data.reason === 'not_found') {
-          msg += '\n\nTips:\n• Add city and country (e.g. "New York, USA")\n• Check for spelling mistakes';
+          msg += t('businessForm.geocodeTipsNotFound');
         } else if (data.reason === 'timeout') {
-          msg += '\n\nGeocoding timed out — check your connection and try again.';
+          msg += t('businessForm.geocodeTipsTimeout');
+        } else if (data.reason === 'rate_limited') {
+          msg += t('businessForm.geocodeTipsRateLimited');
         }
         alert(msg);
       }
     } catch (err) {
       console.error('Geocoding error:', err);
-      alert('Geocoding service is unavailable. Check your connection.');
+      alert(t('businessForm.geocodeServiceUnavailable'));
     }
   };
 
   const businessTypes = [
-    'Corporation', 'LLC', 'Partnership', 'Sole Proprietorship', 
-    'Non-Profit', 'Government', 'Other'
+    { value: 'Corporation', label: t('businessForm.types.corporation') },
+    { value: 'LLC', label: t('businessForm.types.llc') },
+    { value: 'Partnership', label: t('businessForm.types.partnership') },
+    { value: 'Sole Proprietorship', label: t('businessForm.types.soleProprietorship') },
+    { value: 'Non-Profit', label: t('businessForm.types.nonProfit') },
+    { value: 'Government', label: t('businessForm.types.government') },
+    { value: 'Other', label: t('businessForm.types.other') },
   ];
 
   const industries = [
-    'Technology', 'Finance', 'Healthcare', 'Manufacturing', 'Retail',
-    'Real Estate', 'Construction', 'Transportation', 'Education',
-    'Entertainment', 'Hospitality', 'Other'
+    { value: 'Technology', label: t('businessForm.industries.technology') },
+    { value: 'Finance', label: t('businessForm.industries.finance') },
+    { value: 'Healthcare', label: t('businessForm.industries.healthcare') },
+    { value: 'Manufacturing', label: t('businessForm.industries.manufacturing') },
+    { value: 'Retail', label: t('businessForm.industries.retail') },
+    { value: 'Real Estate', label: t('businessForm.industries.realEstate') },
+    { value: 'Construction', label: t('businessForm.industries.construction') },
+    { value: 'Transportation', label: t('businessForm.industries.transportation') },
+    { value: 'Education', label: t('businessForm.industries.education') },
+    { value: 'Entertainment', label: t('businessForm.industries.entertainment') },
+    { value: 'Hospitality', label: t('businessForm.industries.hospitality') },
+    { value: 'Other', label: t('businessForm.industries.other') },
   ];
 
   return (
@@ -154,7 +197,7 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 flex items-center">
               <Building2 className="w-6 h-6 mr-2" />
-              {business ? 'Edit Business' : 'Add New Business'}
+              {business ? t('businessForm.editTitle') : t('businessForm.addTitle')}
             </h2>
             <button onClick={onCancel} className="text-gray-600 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-100">
               <X className="w-5 h-5" />
@@ -165,10 +208,10 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           {/* Basic Information */}
           <div>
-            <h3 className="text-lg font-semibold mb-3">Basic Information</h3>
-            <div className="grid grid-cols-2 gap-4">
+            <h3 className="text-lg font-semibold mb-3">{t('businessForm.basicInformation')}</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="col-span-2">
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Business Name *</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">{t('businessForm.businessNameRequired')}</label>
                 <input
                   type="text"
                   value={formData.name}
@@ -179,41 +222,41 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Type</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">{t('businessForm.type')}</label>
                 <select
                   value={formData.type}
                   onChange={(e) => setFormData({ ...formData, type: e.target.value })}
                   className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="">Select Type</option>
+                  <option value="">{t('businessForm.selectType')}</option>
                   {businessTypes.map(type => (
-                    <option key={type} value={type}>{type}</option>
+                    <option key={type.value} value={type.value}>{type.label}</option>
                   ))}
                 </select>
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Industry</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">{t('businessForm.industry')}</label>
                 <select
                   value={formData.industry}
                   onChange={(e) => setFormData({ ...formData, industry: e.target.value })}
                   className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="">Select Industry</option>
+                  <option value="">{t('businessForm.selectIndustry')}</option>
                   {industries.map(industry => (
-                    <option key={industry} value={industry}>{industry}</option>
+                    <option key={industry.value} value={industry.value}>{industry.label}</option>
                   ))}
                 </select>
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Owner</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">{t('businessForm.owner')}</label>
                 <select
                   value={formData.owner_person_id || ''}
                   onChange={(e) => setFormData({ ...formData, owner_person_id: e.target.value ? parseInt(e.target.value) : null })}
                   className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="">No Owner Selected</option>
+                  <option value="">{t('businessForm.noOwnerSelected')}</option>
                   {people.map(person => (
                     <option key={person.id} value={person.id}>
                       {person.first_name} {person.last_name}
@@ -223,15 +266,30 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Status</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">{t('businessForm.ownerBusiness')}</label>
+                <select
+                  value={formData.owner_business_id || ''}
+                  onChange={(e) => setFormData({ ...formData, owner_business_id: e.target.value ? parseInt(e.target.value) : null })}
+                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">{t('businessForm.noOwnerBusinessSelected')}</option>
+                  {businesses.filter(b => b.id !== business?.id).map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">{t('businessForm.ownerBusinessHint')}</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">{t('businessForm.status')}</label>
                 <select
                   value={formData.status}
                   onChange={(e) => setFormData({ ...formData, status: e.target.value })}
                   className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="dissolved">Dissolved</option>
+                  <option value="active">{t('businessList.statusActive')}</option>
+                  <option value="inactive">{t('businessList.statusInactive')}</option>
+                  <option value="dissolved">{t('businessList.statusDissolved')}</option>
                 </select>
               </div>
             </div>
@@ -241,65 +299,65 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
           <div>
             <h3 className="text-lg font-semibold mb-3 flex items-center">
               <MapPin className="w-5 h-5 mr-2" />
-              Location
+              {t('businessForm.location')}
             </h3>
             <div className="space-y-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Address</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">{t('businessForm.address')}</label>
                 <div className="flex space-x-2">
                   <input
                     type="text"
                     value={formData.address}
                     onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                     className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Street address"
+                    placeholder={t('businessForm.streetAddressPlaceholder')}
                   />
                   <button
                     type="button"
                     onClick={geocodeAddress}
                     className="px-3 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
-                    title="Get coordinates"
+                    title={t('businessForm.getCoordinates')}
                   >
                     <MapPin className="w-4 h-4" />
                   </button>
                 </div>
                 {formData.latitude && formData.longitude && (
                   <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
-                    Coordinates: {formData.latitude.toFixed(6)}, {formData.longitude.toFixed(6)}
+                    {t('businessForm.coordinates', { lat: formData.latitude.toFixed(6), lon: formData.longitude.toFixed(6) })}
                   </p>
                 )}
               </div>
-              
-              <div className="grid grid-cols-2 gap-3">
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <input
                   type="text"
                   value={formData.city}
                   onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                  placeholder="City"
+                  placeholder={t('businessForm.cityPlaceholder')}
                   className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <input
                   type="text"
                   value={formData.state}
                   onChange={(e) => setFormData({ ...formData, state: e.target.value })}
-                  placeholder="State/Province"
+                  placeholder={t('businessForm.stateProvincePlaceholder')}
                   className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
-              
-              <div className="grid grid-cols-2 gap-3">
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <input
                   type="text"
                   value={formData.country}
                   onChange={(e) => setFormData({ ...formData, country: e.target.value })}
-                  placeholder="Country"
+                  placeholder={t('businessForm.countryPlaceholder')}
                   className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <input
                   type="text"
                   value={formData.postal_code}
                   onChange={(e) => setFormData({ ...formData, postal_code: e.target.value })}
-                  placeholder="Postal Code"
+                  placeholder={t('businessForm.postalCodePlaceholder')}
                   className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -308,37 +366,37 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
 
           {/* Contact Information */}
           <div>
-            <h3 className="text-lg font-semibold mb-3">Contact Information</h3>
-            <div className="grid grid-cols-3 gap-3">
+            <h3 className="text-lg font-semibold mb-3">{t('businessForm.contactInformation')}</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <div className="flex items-center space-x-2">
                 <Phone className="w-4 h-4 text-gray-400 dark:text-gray-500" />
                 <input
                   type="tel"
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  placeholder="Phone"
+                  placeholder={t('businessForm.phonePlaceholder')}
                   className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
-              
+
               <div className="flex items-center space-x-2">
                 <Mail className="w-4 h-4 text-gray-400 dark:text-gray-500" />
                 <input
                   type="email"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  placeholder="Email"
+                  placeholder={t('businessForm.emailPlaceholder')}
                   className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
-              
+
               <div className="flex items-center space-x-2">
                 <Globe className="w-4 h-4 text-gray-400 dark:text-gray-500" />
                 <input
                   type="url"
                   value={formData.website}
                   onChange={(e) => setFormData({ ...formData, website: e.target.value })}
-                  placeholder="Website"
+                  placeholder={t('businessForm.websitePlaceholder')}
                   className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -347,13 +405,13 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
 
           {/* Registration Details */}
           <div>
-            <h3 className="text-lg font-semibold mb-3">Registration Details</h3>
-            <div className="grid grid-cols-2 gap-3">
+            <h3 className="text-lg font-semibold mb-3">{t('businessForm.registrationDetails')}</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <input
                 type="text"
                 value={formData.registration_number}
                 onChange={(e) => setFormData({ ...formData, registration_number: e.target.value })}
-                placeholder="Registration Number"
+                placeholder={t('businessForm.registrationNumberPlaceholder')}
                 className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <input
@@ -370,7 +428,7 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-lg font-semibold flex items-center">
                 <Users className="w-5 h-5 mr-2" />
-                Employees ({formData.employees.length})
+                {t('businessForm.employeesCount', { count: formData.employees.length })}
               </h3>
               <button
                 type="button"
@@ -378,48 +436,78 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
                 className="px-3 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center text-sm"
               >
                 <Plus className="w-4 h-4 mr-1" />
-                Add Employee
+                {t('businessForm.addEmployee')}
               </button>
             </div>
-            
+
             {showEmployeeForm && (
               <div className="mb-3 p-3 glass rounded-lg border border-gray-300 dark:border-gray-600">
-                <div className="grid grid-cols-3 gap-2 mb-2">
+                <div className="mb-2">
+                  <select
+                    value={newEmployee.person_id || ''}
+                    onChange={(e) => {
+                      const id = e.target.value ? parseInt(e.target.value) : null;
+                      const match = id ? people.find(p => p.id === id) : null;
+                      setNewEmployee({
+                        ...newEmployee,
+                        person_id: id,
+                        name: match ? formatPersonName(match) : newEmployee.name,
+                      });
+                    }}
+                    className="w-full px-3 py-2 glass border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:border-accent-primary text-sm"
+                  >
+                    <option value="">{t('businessForm.linkPersonPlaceholder')}</option>
+                    {people.map(p => (
+                      <option key={p.id} value={p.id}>{formatPersonName(p)}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">{t('businessForm.linkPersonHint')}</p>
+                </div>
+                <label className="flex items-center gap-2 mb-2 text-sm text-gray-700 dark:text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={!!newEmployee.is_decision_maker}
+                    onChange={(e) => setNewEmployee({ ...newEmployee, is_decision_maker: e.target.checked })}
+                    className="h-4 w-4 text-blue-600 rounded"
+                  />
+                  <span>{t('businessForm.isDecisionMaker')}</span>
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 mb-2">
                   <input
                     type="text"
                     value={newEmployee.name}
                     onChange={(e) => setNewEmployee({ ...newEmployee, name: e.target.value })}
-                    placeholder="Name *"
+                    placeholder={t('businessForm.namePlaceholder')}
                     className="px-3 py-2 glass border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:border-accent-primary text-sm"
                   />
                   <input
                     type="text"
                     value={newEmployee.role}
                     onChange={(e) => setNewEmployee({ ...newEmployee, role: e.target.value })}
-                    placeholder="Role"
+                    placeholder={t('businessForm.rolePlaceholder')}
                     className="px-3 py-2 glass border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:border-accent-primary text-sm"
                   />
                   <input
                     type="text"
                     value={newEmployee.department}
                     onChange={(e) => setNewEmployee({ ...newEmployee, department: e.target.value })}
-                    placeholder="Department"
+                    placeholder={t('businessForm.departmentPlaceholder')}
                     className="px-3 py-2 glass border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:border-accent-primary text-sm"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-2 mb-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
                   <input
                     type="email"
                     value={newEmployee.email}
                     onChange={(e) => setNewEmployee({ ...newEmployee, email: e.target.value })}
-                    placeholder="Email"
+                    placeholder={t('businessForm.emailPlaceholder')}
                     className="px-3 py-2 glass border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:border-accent-primary text-sm"
                   />
                   <input
                     type="text"
                     value={newEmployee.notes}
                     onChange={(e) => setNewEmployee({ ...newEmployee, notes: e.target.value })}
-                    placeholder="Notes"
+                    placeholder={t('businessForm.notesPlaceholder')}
                     className="px-3 py-2 glass border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:border-accent-primary text-sm"
                   />
                 </div>
@@ -428,18 +516,18 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
                     type="button"
                     onClick={() => {
                       setShowEmployeeForm(false);
-                      setNewEmployee({ name: '', role: '', department: '', email: '', notes: '' });
+                      setNewEmployee({ name: '', person_id: null, is_decision_maker: false, role: '', department: '', email: '', notes: '' });
                     }}
                     className="px-3 py-1 text-gray-700 dark:text-slate-300 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 hover:bg-gray-200 text-sm transition-all"
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                   <button
                     type="button"
                     onClick={addEmployee}
                     className="px-3 py-1 bg-blue-600 text-white dark:bg-blue-500 rounded-lg hover:shadow-md text-sm transition-all"
                   >
-                    Add
+                    {t('common.add')}
                   </button>
                 </div>
               </div>
@@ -453,8 +541,18 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
                     <div className="flex-1">
                       <div className="flex items-center space-x-2">
                         <span className="font-medium">{employee.name}</span>
-                        {employee.role && <span className="text-sm text-gray-600 dark:text-gray-400">- {employee.role}</span>}
-                        {employee.department && <span className="text-sm text-gray-500 dark:text-gray-500 dark:text-gray-400">({employee.department})</span>}
+                        {employee.is_decision_maker && (
+                          <span className="px-2 py-0.5 text-xs rounded bg-violet-100 dark:bg-violet-900/30 text-violet-800 dark:text-violet-300">
+                            {t('businessForm.decisionMakerBadge')}
+                          </span>
+                        )}
+                        {!employee.person_id && (
+                          <span className="px-2 py-0.5 text-xs rounded bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300" title={t('businessForm.unlinkedPersonHint')}>
+                            {t('businessForm.unlinkedPersonBadge')}
+                          </span>
+                        )}
+                        {employee.role && <span className="text-sm text-gray-600 dark:text-gray-400">{t('businessForm.employeeRoleSuffix', { role: employee.role })}</span>}
+                        {employee.department && <span className="text-sm text-gray-500 dark:text-gray-500 dark:text-gray-400">{t('businessForm.employeeDepartmentSuffix', { department: employee.department })}</span>}
                       </div>
                       <div className="flex items-center space-x-4 mt-1">
                         {employee.email && (
@@ -483,7 +581,7 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
 
           {/* Notes */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Notes</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">{t('businessForm.notes')}</label>
             <textarea
               value={formData.notes}
               onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -499,13 +597,13 @@ const AddEditBusinessForm = ({ business, onSave, onCancel }) => {
               onClick={onCancel}
               className="px-4 py-2 text-gray-700 dark:text-slate-300 bg-gray-100 dark:bg-slate-700 rounded-md hover:bg-gray-200"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
               className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
             >
-              {business ? 'Update' : 'Create'} Business
+              {business ? t('businessForm.updateBusiness') : t('businessForm.createBusiness')}
             </button>
           </div>
         </form>

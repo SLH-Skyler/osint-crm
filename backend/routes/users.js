@@ -6,7 +6,10 @@ const { pool } = require('../config/database');
 const { requireAdmin, requireAuth } = require('../middleware/auth');
 const { validatePasswordStrength } = require('../utils/passwordPolicy');
 const { revokeSessionsForUser } = require('../utils/sessions');
+const { apiLimiter } = require('../middleware/rateLimiters');
 
+
+router.use(apiLimiter);
 // Get all users (admin only)
 router.get('/', requireAdmin, async (req, res) => {
   try {
@@ -19,6 +22,22 @@ router.get('/', requireAdmin, async (req, res) => {
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Lightweight directory for non-admin pickers (issue #84): a project
+// manager needs to find users to add as project members without the full
+// admin user-management payload (role, last_login, etc.) being exposed to
+// them. Declared before /:id so it isn't swallowed by that pattern.
+router.get('/directory', requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, username, email FROM users WHERE is_active = TRUE ORDER BY username ASC`
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching user directory:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -51,11 +70,8 @@ router.post('/', requireAdmin, async (req, res) => {
   try {
     const { username, email, password, first_name, last_name, role } = req.body;
 
-    console.log('Creating user with data:', { username, email, password: password ? '[PROVIDED]' : '[MISSING]', first_name, last_name, role });
-
     // Validation
     if (!username || !password) {
-      console.log('Validation failed: missing username or password');
       return res.status(400).json({ error: 'Username and password are required' });
     }
 
